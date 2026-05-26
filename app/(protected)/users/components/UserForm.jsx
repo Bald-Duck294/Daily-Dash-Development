@@ -1,11 +1,13 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { useState, useEffect } from "react";
-import roleApi from "@/features/roles/api/roles.api";
-import LocationsApi from "@/features/locations/locations.api";
-import { CompanyApi } from "@/features/companies/api/companies.api";
+import { useState, useEffect, useMemo } from "react";
 import { useCompanyId } from "@/providers/CompanyProvider";
+import { useSelector } from "react-redux";
+// TanStack Query Hooks
+import { useGetAllRoles } from "@/features/roles/queries/roles.queries"; 
+import { useGetAllLocations } from "@/features/locations/locations.queries"; 
+import { useCompany } from "@/features/companies/queries/companies.queries"; 
 
 export default function UserForm({
   initialData,
@@ -15,6 +17,22 @@ export default function UserForm({
 }) {
   const { companyId } = useCompanyId();
 
+  // --- TANSTACK QUERIES ---
+  const { data: companyData, isLoading: isLoadingCompany } = useCompany(companyId);
+  
+  // FIX 1: Do not use inline fallback `=[]` here, it breaks memoization
+  const { data: allRoles, isLoading: isLoadingRoles } = useGetAllRoles({ enabled: !!companyId });
+  const { data: allLocations, isLoading: isLoadingLocations } = useGetAllLocations(companyId);
+
+  // --- DERIVED STATE ---
+  const isLoadingData = isLoadingCompany || isLoadingRoles || isLoadingLocations;
+  // Add this line to get the user
+  const currentUser = useSelector((state) => state.auth.user);
+  // Handled the fallback safely inside the useMemo
+  const roles = useMemo(() => (allRoles || []).filter((role) => role.id !== 1), [allRoles]);
+  const locations = allLocations || [];
+
+  // --- FORM STATE ---
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -25,12 +43,9 @@ export default function UserForm({
     location_ids: [],
   });
 
-  const [currentCompany, setCurrentCompany] = useState(null);
-  const [roles, setRoles] = useState([]);
-  const [locations, setLocations] = useState([]);
   const [canAssignLocation, setCanAssignLocation] = useState(false);
-  const [isLoadingData, setIsLoadingData] = useState(true);
 
+  // --- LOGIC HELPERS ---
   const isFormValid = () => {
     const hasName = formData.name.trim().length > 0;
     const hasPhone = formData.phone.trim().length === 10;
@@ -39,44 +54,10 @@ export default function UserForm({
     return hasName && hasPhone && hasRole && hasPassword;
   };
 
-  console.log(isFormValid(), "is form valid ");
+  // --- EFFECTS ---
+  
+  // 1. Initialize Form Data
   useEffect(() => {
-    const fetchCompanyData = async () => {
-      if (!companyId) {
-        setIsLoadingData(false);
-        return;
-      }
-
-      setIsLoadingData(true);
-      try {
-        const companyRes = await CompanyApi.getCompanyById(companyId);
-        if (companyRes.success) {
-          setCurrentCompany(companyRes.data);
-        }
-
-        const rolesRes = await roleApi.getAllRoles(companyId);
-        if (rolesRes.success) {
-          const filteredRoles = (rolesRes.data?.roles || []).filter(
-            (role) => role.id !== 1,
-          );
-          setRoles(filteredRoles);
-        }
-
-        const locationsRes = await LocationsApi.getAllLocations(companyId);
-        if (locationsRes.success) {
-          setLocations(locationsRes.data || []);
-        }
-      } catch (error) {
-        console.error("Error fetching company data:", error);
-      }
-      setIsLoadingData(false);
-    };
-
-    fetchCompanyData();
-  }, [companyId]);
-
-  useEffect(() => {
-    console.log(initialData, "initial data");
     if (initialData) {
       setFormData({
         name: initialData.name || "",
@@ -93,18 +74,32 @@ export default function UserForm({
     }
   }, [initialData, companyId]);
 
-  useEffect(() => {
+  // 2. Handle Location Assignment Visibility
+useEffect(() => {
+    // Check if the current user is a Superadmin (e.g., assuming role ID 1 is Superadmin)
+    // You can get this from your auth store/context if available
+    const isSuperadmin = currentUser?.role_id === 1; // Adjust 'currentUser' source as needed
+
     const selectedRole = roles.find(
       (r) => r.id.toString() === formData.role_id.toString(),
     );
-    if (selectedRole && ["Admin", "Supervisor"].includes(selectedRole.name)) {
+    
+    // Logic: Superadmin can always assign, OR if the role is Admin/Supervisor
+    const hasPermissionToAssign = 
+      isSuperadmin || 
+      (selectedRole && ["Admin", "Supervisor"].includes(selectedRole.name));
+    
+    if (hasPermissionToAssign) {
       setCanAssignLocation(true);
     } else {
       setCanAssignLocation(false);
-      setFormData((prev) => ({ ...prev, location_ids: [] }));
+      if (formData.location_ids.length > 0) {
+        setFormData((prev) => ({ ...prev, location_ids: [] }));
+      }
     }
-  }, [formData.role_id, roles]);
+  }, [formData.role_id, formData.location_ids.length, roles, currentUser]);
 
+  // --- EVENT HANDLERS ---
   const handleChange = (e) => {
     const { name, value } = e.target;
 
@@ -135,8 +130,6 @@ export default function UserForm({
       return;
     }
 
-    console.log(formData, "form Data");
-
     const dataToSend = {
       ...formData,
       company_id: companyId,
@@ -145,17 +138,14 @@ export default function UserForm({
 
     onSubmit(dataToSend);
   };
-  const inputClass =
-    "w-full px-4 py-2.5 text-sm rounded-lg outline-none transition-all";
 
-  const labelClass =
-    "block text-xs font-semibold mb-2 uppercase tracking-wide";
-
+  // --- CSS CLASSES ---
+  const inputClass = "w-full px-4 py-2.5 text-sm rounded-lg outline-none transition-all";
+  const labelClass = "block text-xs font-semibold mb-2 uppercase tracking-wide";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Operation Node Section */}
-
       <div className="flex items-center gap-3">
         <div
           className="h-10 w-10 rounded-xl flex items-center justify-center"
@@ -200,7 +190,6 @@ export default function UserForm({
 
       {/* User Information Section */}
       <div className="space-y-5">
-        {/* Section Header */}
         <div className="flex items-center gap-2 mb-4">
           <svg
             className="w-5 h-5"
@@ -216,7 +205,6 @@ export default function UserForm({
               d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
             />
           </svg>
-
           <h2
             className="text-base font-bold"
             style={{ color: "var(--user-form-text)" }}
@@ -225,15 +213,10 @@ export default function UserForm({
           </h2>
         </div>
 
-        {/* Full Name */}
         <div>
-          <label
-            className={labelClass}
-            style={{ color: "var(--user-form-label)" }}
-          >
+          <label className={labelClass} style={{ color: "var(--user-form-label)" }}>
             Full Name *
           </label>
-
           <input
             type="text"
             name="name"
@@ -250,16 +233,11 @@ export default function UserForm({
           />
         </div>
 
-        {/* Email + Phone */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label
-              className={labelClass}
-              style={{ color: "var(--user-form-label)" }}
-            >
+            <label className={labelClass} style={{ color: "var(--user-form-label)" }}>
               Email
             </label>
-
             <input
               type="email"
               name="email"
@@ -276,13 +254,9 @@ export default function UserForm({
           </div>
 
           <div>
-            <label
-              className={labelClass}
-              style={{ color: "var(--user-form-label)" }}
-            >
+            <label className={labelClass} style={{ color: "var(--user-form-label)" }}>
               Phone *
             </label>
-
             <input
               type="tel"
               name="phone"
@@ -303,10 +277,8 @@ export default function UserForm({
         </div>
       </div>
 
-
       {/* Access & Security Section */}
       <div className="space-y-5 pt-4">
-        {/* Section Header */}
         <div className="flex items-center gap-2 mb-4">
           <svg
             className="w-5 h-5"
@@ -322,7 +294,6 @@ export default function UserForm({
               d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
             />
           </svg>
-
           <h2
             className="text-base font-bold"
             style={{ color: "var(--user-form-text)" }}
@@ -332,12 +303,8 @@ export default function UserForm({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Password */}
           <div>
-            <label
-              className={labelClass}
-              style={{ color: "var(--user-form-label)" }}
-            >
+            <label className={labelClass} style={{ color: "var(--user-form-label)" }}>
               <span className="flex items-center gap-1">
                 <svg
                   className="w-3 h-3"
@@ -354,7 +321,6 @@ export default function UserForm({
                 Password {!isEditing && "*"}
               </span>
             </label>
-
             <input
               type="password"
               name="password"
@@ -372,12 +338,8 @@ export default function UserForm({
             />
           </div>
 
-          {/* Access Level */}
           <div>
-            <label
-              className={labelClass}
-              style={{ color: "var(--user-form-label)" }}
-            >
+            <label className={labelClass} style={{ color: "var(--user-form-label)" }}>
               <span className="flex items-center gap-1">
                 <svg
                   className="w-3 h-3"
@@ -390,7 +352,6 @@ export default function UserForm({
                 Access Level *
               </span>
             </label>
-
             <select
               name="role_id"
               value={formData.role_id}
@@ -417,14 +378,10 @@ export default function UserForm({
         </div>
       </div>
 
-
       {/* Location Assignment */}
       {canAssignLocation && (
         <div className="pt-4">
-          <label
-            className={labelClass}
-            style={{ color: "var(--user-form-label)" }}
-          >
+          <label className={labelClass} style={{ color: "var(--user-form-label)" }}>
             Assign Locations (Optional)
           </label>
 
@@ -436,10 +393,7 @@ export default function UserForm({
             }}
           >
             {isLoadingData ? (
-              <p
-                className="text-sm"
-                style={{ color: "var(--user-form-subtext)" }}
-              >
+              <p className="text-sm" style={{ color: "var(--user-form-subtext)" }}>
                 Loading locations...
               </p>
             ) : locations.length > 0 ? (
@@ -447,16 +401,9 @@ export default function UserForm({
                 <label
                   key={loc.id}
                   className="flex items-center gap-3 cursor-pointer p-2 rounded transition-colors"
-                  style={{
-                    color: "var(--user-form-text)",
-                  }}
-                  onMouseEnter={(e) =>
-                  (e.currentTarget.style.background =
-                    "var(--user-form-muted-bg)")
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "transparent")
-                  }
+                  style={{ color: "var(--user-form-text)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--user-form-muted-bg)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <input
                     type="checkbox"
@@ -465,11 +412,8 @@ export default function UserForm({
                     checked={formData.location_ids.includes(loc.id.toString())}
                     onChange={handleLocationChange}
                     className="h-4 w-4 rounded"
-                    style={{
-                      accentColor: "var(--user-form-success)",
-                    }}
+                    style={{ accentColor: "var(--user-form-success)" }}
                   />
-
                   <span className="text-sm font-medium">
                     {loc.name}
                     {loc.address && (
@@ -484,10 +428,7 @@ export default function UserForm({
                 </label>
               ))
             ) : (
-              <p
-                className="text-sm"
-                style={{ color: "var(--user-form-subtext)" }}
-              >
+              <p className="text-sm" style={{ color: "var(--user-form-subtext)" }}>
                 No locations available. Create locations first to assign them.
               </p>
             )}
@@ -504,13 +445,11 @@ export default function UserForm({
         </div>
       )}
 
-
       {/* Action Buttons */}
       <div
         className="flex justify-end gap-3 pt-6"
         style={{ borderTop: "1px solid var(--user-form-border)" }}
       >
-        {/* CANCEL */}
         <button
           type="button"
           onClick={() => window.history.back()}
@@ -521,23 +460,12 @@ export default function UserForm({
             color: "var(--user-form-cancel-text)",
           }}
         >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
           CANCEL
         </button>
 
-        {/* SUBMIT */}
         <button
           type="submit"
           disabled={isLoadingData || !isFormValid() || !canSubmit}
@@ -547,24 +475,12 @@ export default function UserForm({
             color: "var(--user-form-submit-text)",
           }}
         >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-            />
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
           </svg>
           {isEditing ? "SAVE CHANGES" : "CREATE USER"}
         </button>
       </div>
-
-
     </form>
   );
 }

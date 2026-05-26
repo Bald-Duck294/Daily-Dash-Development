@@ -23,6 +23,7 @@ import {
   ListChecks,
   Activity,
   Wrench,
+  AlertCircle,
 } from "lucide-react";
 
 /* ---------------- SUPERADMIN (NO COMPANY) ---------------- */
@@ -112,6 +113,11 @@ export function getSuperadminMainMenu() {
         // },
       ],
     },
+    {
+      icon: AlertCircle,
+      label: "Service Request",
+      href: "/serviceRequest",
+    },  
   ];
 }
 /* ---------------- SUPERADMIN (INSIDE COMPANY) ---------------- */
@@ -504,7 +510,7 @@ export function getAdminMenu(companyId) {
         },
       ],
     },
-    
+
     {
       icon: MapPin,
       label: "Locate On Map",

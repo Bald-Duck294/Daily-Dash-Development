@@ -1,6 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import {
   MapPin,
   Navigation,
@@ -20,60 +21,30 @@ import {
   XCircle,
   Grid3x3,
   List,
-  EllipsisVertical,
 } from "lucide-react";
-import LocationsApi from "@/features/locations/locations.api";
 import { useRouter } from "next/navigation";
 import Loader from "@/components/ui/Loader";
 import toast, { Toaster } from "react-hot-toast";
-import FacilityCompanyApi from "@/features/facilityCompany/facilityCompany.api";
 import LocationActionsMenu from "./components/LocationActionsMenu";
 import { useSelector } from "react-redux";
-import locationTypesApi from "@/features/locationTypes/locationTypes.api";
 import { useCompanyId } from "@/providers/CompanyProvider";
 import { usePermissions } from "@/shared/hooks/usePermission";
 import { useRequirePermission } from "@/shared/hooks/useRequirePermission";
 import { MODULES } from "@/shared/constants/permissions";
 
-function WashroomsPage() {
-  // State Management
-  const [list, setList] = useState([]);
-  const [filteredList, setFilteredList] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [minRating, setMinRating] = useState("");
-  const [sortBy, setSortBy] = useState("newest");
+// ✅ Import TanStack Query Hooks
+import { 
+  useGetAllLocations, 
+  useDeleteLocation, 
+  useToggleLocationStatus 
+} from "@/features/locations/locations.queries";
+import { useFacilityCompanies } from "@/features/facilityCompany/facilityCompany.queries";
+import { useLocationTypes } from "@/features/locationTypes/locationTypes.queries";
 
-  const [nameSortOrder, setNameSortOrder] = useState(null);
-  const [currentScoreSortOrder, setCurrentScoreSortOrder] = useState(null);
-  const [avgScoreSortOrder, setAvgScoreSortOrder] = useState(null);
-  const [statusSortOrder, setStatusSortOrder] = useState(null);
-  const [viewMode, setViewMode] = useState("table");
-  const [deleteModal, setDeleteModal] = useState({
-    open: false,
-    location: null,
-  });
-  const [actionsMenuOpen, setActionsMenuOpen] = useState(null);
-  const [deleting, setDeleting] = useState(false);
-  const [togglingStatus, setTogglingStatus] = useState(null);
+function WashroomsPage() {
+  const router = useRouter();
   const { companyId } = useCompanyId();
   const actionsMenuRef = useRef(null);
-  const [statusModal, setStatusModal] = useState({
-    open: false,
-    location: null,
-  });
-  const [locationTypes, setLocationTypes] = useState([]);
-  const [selectedLocationTypeId, setSelectedLocationTypeId] = useState("");
-  const [facilityCompanyId, setFacilityCompanyId] = useState("");
-  const [facilityCompanyName, setFacilityCompanyName] = useState("");
-  const [facilityCompanies, setFacilityCompanies] = useState([]);
-  const [assignmentFilter, setAssignmentFilter] = useState("");
-  const [cleanerModal, setCleanerModal] = useState({
-    open: false,
-    location: null,
-  });
-
-  const router = useRouter();
 
   const user = useSelector((state) => state.auth.user);
   const userRoleId = user?.role_id;
@@ -87,176 +58,77 @@ function WashroomsPage() {
   const canToggleStatus = hasPermission(MODULES.LOCATIONS, "toggle_status");
   const canAssignCleaner = canAdd(MODULES.ASSIGNMENTS);
 
-  // --- Helpers & Logic ---
+  // --- UI & Filter State ---
+  const [searchQuery, setSearchQuery] = useState("");
+  const [minRating, setMinRating] = useState("");
+  const [sortBy, setSortBy] = useState("newest");
 
-  const handleSort = (column) => {
-    setNameSortOrder(null);
-    setCurrentScoreSortOrder(null);
-    setAvgScoreSortOrder(null);
-    setStatusSortOrder(null);
+  const [nameSortOrder, setNameSortOrder] = useState(null);
+  const [currentScoreSortOrder, setCurrentScoreSortOrder] = useState(null);
+  const [avgScoreSortOrder, setAvgScoreSortOrder] = useState(null);
+  const [statusSortOrder, setStatusSortOrder] = useState(null);
+  const [viewMode, setViewMode] = useState("table");
+  
+  const [selectedLocationTypeId, setSelectedLocationTypeId] = useState("");
+  const [facilityCompanyId, setFacilityCompanyId] = useState("");
+  const [facilityCompanyName, setFacilityCompanyName] = useState("");
+  const [assignmentFilter, setAssignmentFilter] = useState("");
 
-    switch (column) {
-      case "name":
-        const newNameOrder = nameSortOrder === "asc" ? "desc" : "asc";
-        setNameSortOrder(newNameOrder);
-        setSortBy(newNameOrder === "asc" ? "nameAsc" : "nameDesc");
-        break;
-      case "currentScore":
-        const newCurrentScoreOrder =
-          currentScoreSortOrder === "desc" ? "asc" : "desc";
-        setCurrentScoreSortOrder(newCurrentScoreOrder);
-        setSortBy(
-          newCurrentScoreOrder === "desc"
-            ? "currentScoreDesc"
-            : "currentScoreAsc",
-        );
-        break;
-      case "avgScore":
-        const newAvgScoreOrder = avgScoreSortOrder === "desc" ? "asc" : "desc";
-        setAvgScoreSortOrder(newAvgScoreOrder);
-        setSortBy(newAvgScoreOrder === "desc" ? "avgScoreDesc" : "avgScoreAsc");
-        break;
-      case "status":
-        const newStatusOrder =
-          statusSortOrder === "active" ? "inactive" : "active";
-        setStatusSortOrder(newStatusOrder);
-        setSortBy(
-          newStatusOrder === "active" ? "statusActive" : "statusInactive",
-        );
-        break;
-    }
-  };
+  // Modals & Menus
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(null);
+  const [deleteModal, setDeleteModal] = useState({ open: false, location: null });
+  const [statusModal, setStatusModal] = useState({ open: false, location: null });
+  const [cleanerModal, setCleanerModal] = useState({ open: false, location: null });
 
-  const renderSortIcon = (currentOrder) => {
-    if (!currentOrder) {
-      return (
-        <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-blue-500 transition-colors" />
-      );
-    }
-    if (currentOrder === "asc" || currentOrder === "active") {
-      return <ArrowUp className="w-3 h-3 text-orange-500" />;
-    }
-    return <ArrowDown className="w-3 h-3 text-orange-500" />;
-  };
+  // --- API Queries via TanStack ---
+  const { data: rawList = [], isLoading: loadingLocations } = useGetAllLocations(companyId, true);
+  
+  const { data: typesData = [] } = useLocationTypes(companyId);
+  const locationTypes = Array.isArray(typesData) ? typesData : typesData?.data || [];
 
-  // --- Effects (API Calls) ---
+  const { data: facilitiesResponse } = useFacilityCompanies(companyId);
+  const facilityCompanies = facilitiesResponse?.data || [];
 
-  useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const sortByParam = searchParams.get("sortBy");
-    const facilityCompanyIdParam = searchParams.get("facilityCompanyId");
-    const facilityCompanyNameParam = searchParams.get("facilityCompanyName");
+  const { mutate: deleteLocation, isPending: deleting } = useDeleteLocation();
+  const { mutate: toggleStatus, isPending: togglingStatus } = useToggleLocationStatus();
 
-    if (sortByParam === "currentScore") {
-      setSortBy("currentScoreDesc");
-      setCurrentScoreSortOrder("desc");
-    }
+  // Combine loading state
+  const loading = loadingLocations;
 
-    if (facilityCompanyIdParam) {
-      setFacilityCompanyId(facilityCompanyIdParam);
-      if (facilityCompanyNameParam) {
-        setFacilityCompanyName(decodeURIComponent(facilityCompanyNameParam));
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (
-        actionsMenuRef.current &&
-        !actionsMenuRef.current.contains(event.target)
-      ) {
-        setActionsMenuOpen(null);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    const fetchLocationTypes = async () => {
-      try {
-        const response = await locationTypesApi.getAll(companyId);
-        setLocationTypes(response);
-      } catch (error) {
-        console.error("Error fetching location types:", error);
-      }
-    };
-
-    const fetchFacilityCompanies = async () => {
-      try {
-        const response = await FacilityCompanyApi.getAll(companyId);
-        if (response.success) {
-          setFacilityCompanies(response.data);
-        }
-      } catch (error) {
-        console.error("Error fetching facility companies:", error);
-      }
-    };
-
-    if (companyId && companyId !== "null" && companyId !== null) {
-      fetchLocationTypes();
-      fetchFacilityCompanies();
-    }
-  }, [companyId]);
-
-  const fetchList = async () => {
-    setLoading(true);
-    try {
-      const response = await LocationsApi.getAllLocations(companyId, true);
-      setList(response.data);
-    } catch (error) {
-      console.error("Error fetching list:", error);
-      toast.error("Failed to fetch washrooms");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!companyId || companyId === "null" || companyId === null) {
-      setLoading(false);
-      return;
-    }
-    fetchList();
-  }, [companyId]);
-
-  useEffect(() => {
-    let filtered = [...list];
+  // --- Filtering & Sorting Logic (Instant via useMemo) ---
+  const filteredList = useMemo(() => {
+    let filtered = [...rawList];
 
     if (selectedLocationTypeId) {
       filtered = filtered.filter(
-        (item) => String(item.type_id) === String(selectedLocationTypeId),
+        (item) => String(item.type_id) === String(selectedLocationTypeId)
       );
     }
     if (facilityCompanyId) {
       filtered = filtered.filter(
-        (item) =>
-          String(item.facility_company_id) === String(facilityCompanyId),
+        (item) => String(item.facility_company_id) === String(facilityCompanyId)
       );
     }
     if (assignmentFilter === "assigned") {
       filtered = filtered.filter(
-        (item) =>
-          item.cleaner_assignments && item.cleaner_assignments.length > 0,
+        (item) => item.cleaner_assignments && item.cleaner_assignments.length > 0
       );
     } else if (assignmentFilter === "unassigned") {
       filtered = filtered.filter(
-        (item) =>
-          !item.cleaner_assignments || item.cleaner_assignments.length === 0,
+        (item) => !item.cleaner_assignments || item.cleaner_assignments.length === 0
       );
     }
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter((item) =>
-        item.name.toLowerCase().includes(query),
+        item.name.toLowerCase().includes(query)
       );
     }
     if (minRating) {
       filtered = filtered.filter(
         (item) =>
           item.averageRating !== null &&
-          parseFloat(item.averageRating) >= parseFloat(minRating),
+          parseFloat(item.averageRating) >= parseFloat(minRating)
       );
     }
 
@@ -290,64 +162,95 @@ function WashroomsPage() {
       }
     });
 
-    setFilteredList(filtered);
-  }, [
-    searchQuery,
-    minRating,
-    sortBy,
-    list,
-    facilityCompanyId,
-    selectedLocationTypeId,
-    assignmentFilter,
-  ]);
+    return filtered;
+  }, [rawList, selectedLocationTypeId, facilityCompanyId, assignmentFilter, searchQuery, minRating, sortBy]);
 
-  // --- Handlers ---
+  // --- URL Param Sync ---
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const sortByParam = searchParams.get("sortBy");
+    const facilityCompanyIdParam = searchParams.get("facilityCompanyId");
+    const facilityCompanyNameParam = searchParams.get("facilityCompanyName");
 
-  const renderRating = (rating, reviewCount = 0) => {
-    if (!rating) {
-      return (
-        <span
-          className="text-sm"
-          style={{ color: "var(--washroom-text-muted)" }}
-        >
-          —
-        </span>
-      );
+    if (sortByParam === "currentScore") {
+      setSortBy("currentScoreDesc");
+      setCurrentScoreSortOrder("desc");
     }
 
-    const smartRound = (rating) => {
-      const rounded = Math.round(rating * 10) / 10;
-      return rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1);
+    if (facilityCompanyIdParam) {
+      setFacilityCompanyId(facilityCompanyIdParam);
+      if (facilityCompanyNameParam) {
+        setFacilityCompanyName(decodeURIComponent(facilityCompanyNameParam));
+      }
+    }
+  }, []);
+
+  // --- Click Outside Menu ---
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target)) {
+        setActionsMenuOpen(null);
+      }
     };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-    const { color, bg, label } = getRatingColor(rating);
+  // --- Handlers ---
+  const handleSort = (column) => {
+    setNameSortOrder(null);
+    setCurrentScoreSortOrder(null);
+    setAvgScoreSortOrder(null);
+    setStatusSortOrder(null);
 
-    return (
-      <div
-        className={`inline-flex flex-col items-center gap-0.5 px-3 py-1.5 ${bg} rounded-lg`}
-      >
-        <div className="flex items-center gap-1.5">
-          <span className={`font-bold text-base ${color}`}>
-            {smartRound(rating)}
-          </span>
-          <span className={`text-xs font-medium ${color}`}>{label}</span>
-        </div>
-        {reviewCount > 0 && (
-          <span className="text-xs text-slate-500">
-            {reviewCount} {reviewCount === 1 ? "review" : "reviews"}
-          </span>
-        )}
-      </div>
-    );
+    switch (column) {
+      case "name":
+        const newNameOrder = nameSortOrder === "asc" ? "desc" : "asc";
+        setNameSortOrder(newNameOrder);
+        setSortBy(newNameOrder === "asc" ? "nameAsc" : "nameDesc");
+        break;
+      case "currentScore":
+        const newCurrentScoreOrder =
+          currentScoreSortOrder === "desc" ? "asc" : "desc";
+        setCurrentScoreSortOrder(newCurrentScoreOrder);
+        setSortBy(
+          newCurrentScoreOrder === "desc"
+            ? "currentScoreDesc"
+            : "currentScoreAsc"
+        );
+        break;
+      case "avgScore":
+        const newAvgScoreOrder = avgScoreSortOrder === "desc" ? "asc" : "desc";
+        setAvgScoreSortOrder(newAvgScoreOrder);
+        setSortBy(newAvgScoreOrder === "desc" ? "avgScoreDesc" : "avgScoreAsc");
+        break;
+      case "status":
+        const newStatusOrder =
+          statusSortOrder === "active" ? "inactive" : "active";
+        setStatusSortOrder(newStatusOrder);
+        setSortBy(
+          newStatusOrder === "active" ? "statusActive" : "statusInactive"
+        );
+        break;
+    }
   };
+
+  const renderSortIcon = (currentOrder) => {
+    if (!currentOrder) {
+      return (
+        <ArrowUpDown className="w-3 h-3 text-slate-300 group-hover:text-blue-500 transition-colors" />
+      );
+    }
+    if (currentOrder === "asc" || currentOrder === "active") {
+      return <ArrowUp className="w-3 h-3 text-orange-500" />;
+    }
+    return <ArrowDown className="w-3 h-3 text-orange-500" />;
+  };
+
   const getRatingColor = (rating) => {
     const actualRating = rating || 0;
     if (actualRating >= 7.5)
-      return {
-        color: "text-emerald-600",
-        bg: "bg-emerald-50",
-        label: "Amazing",
-      };
+      return { color: "text-emerald-600", bg: "bg-emerald-50", label: "Amazing" };
     if (actualRating >= 5)
       return { color: "text-orange-600", bg: "bg-orange-50", label: "Great" };
     if (actualRating >= 3)
@@ -369,70 +272,40 @@ function WashroomsPage() {
 
   const handleAddToilet = () =>
     router.push(`/washrooms/add-location?companyId=${companyId}`);
+  
   const handleAssignWashroom = () =>
     router.push(`/userMapping/add?companyId=${companyId}`);
 
-  const confirmStatusToggle = async () => {
+  const confirmStatusToggle = () => {
     if (!statusModal.location) return;
     const location = statusModal.location;
-    setTogglingStatus(location.id);
-    try {
-      const response = await LocationsApi.toggleStautsLocations(location.id);
-      if (response.success) {
-        let newStatus = null;
-        if (response.data?.data?.status !== undefined)
-          newStatus = response.data.data.status;
-        else if (response.data?.status !== undefined)
-          newStatus = response.data.status;
-        else
-          newStatus = !(location.status === true || location.status === null);
-
-        toast.success(
-          `Washroom ${newStatus ? "enabled" : "disabled"} successfully`,
-        );
-        setList((prevList) =>
-          prevList.map((item) =>
-            item.id === location.id ? { ...item, status: newStatus } : item,
-          ),
-        );
+    const isCurrentlyActive = location.status === true || location.status === null;
+    
+    toggleStatus(location.id, {
+      onSuccess: () => {
+        toast.success(`Washroom ${isCurrentlyActive ? "disabled" : "enabled"} successfully`);
         setStatusModal({ open: false, location: null });
-      } else {
-        toast.error(response.error || "Failed to toggle status");
+      },
+      onError: (error) => {
+        toast.error(error.message || "Failed to toggle status");
       }
-    } catch (error) {
-      console.error("Toggle status error:", error);
-      toast.error("Failed to toggle status");
-    } finally {
-      setTogglingStatus(null);
-    }
+    });
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = () => {
     if (!deleteModal.location) return;
     const locationId = deleteModal.location.id;
     const locationName = deleteModal.location.name;
-    setDeleting(true);
-    try {
-      const response = await LocationsApi.deleteLocation(
-        locationId,
-        companyId,
-        true,
-      );
-      if (response && response.success) {
+    
+    deleteLocation({ id: locationId, companyId, softDelete: true }, {
+      onSuccess: () => {
         toast.success(`"${locationName}" deleted successfully`);
-        setList((prevList) =>
-          prevList.filter((item) => item.id !== locationId),
-        );
         setDeleteModal({ open: false, location: null });
-      } else {
-        toast.error(response.error || "Failed to delete washroom");
+      },
+      onError: (error) => {
+        toast.error(error.message || "Failed to delete washroom");
       }
-    } catch (error) {
-      console.error("Exception during delete:", error);
-      toast.error("Failed to delete washroom");
-    } finally {
-      setDeleting(false);
-    }
+    });
   };
 
   const clearAllFilters = () => {
@@ -486,7 +359,7 @@ function WashroomsPage() {
     );
   };
 
-  // --- REUSABLE CARD COMPONENT (Used in Grid & Mobile view) ---
+  // --- REUSABLE CARD COMPONENT ---
   const WashroomCard = ({ item, index }) => (
     <div
       onClick={() => handleView(item.id)}
@@ -497,16 +370,12 @@ function WashroomsPage() {
         boxShadow: "var(--washroom-shadow)",
       }}
     >
-      {/* Top Horizontal Line on Hover */}
       <div
         className="absolute top-0 left-0 w-full h-1 origin-left scale-x-0 group-hover:scale-x-100 transition-transform duration-300"
         style={{
-          background:
-            "linear-gradient(90deg, var(--washroom-primary), var(--washroom-primary-hover))",
+          background: "linear-gradient(90deg, var(--washroom-primary), var(--washroom-primary-hover))",
         }}
       />
-
-      {/* Header */}
       <div className="flex justify-between items-start mb-6">
         <div className="flex items-center gap-4">
           <div
@@ -518,7 +387,6 @@ function WashroomsPage() {
           >
             {item.name?.charAt(0).toUpperCase()}
           </div>
-
           <div>
             <h3
               className="font-bold text-lg leading-tight transition-colors"
@@ -530,24 +398,18 @@ function WashroomsPage() {
               className="text-xs mt-1 font-medium tracking-wide"
               style={{ color: "var(--washroom-subtitle)" }}
             >
-              ID: #{String(index + 1).padStart(2, "0")} •{" "}
-              {item.location_types?.name}
+              ID: #{String(index + 1).padStart(2, "0")} • {item.location_types?.name}
             </p>
           </div>
         </div>
-
-        {/* Menu */}
         <div className="relative" onClick={(e) => e.stopPropagation()}>
           <button
-            onClick={() =>
-              setActionsMenuOpen(actionsMenuOpen === item.id ? null : item.id)
-            }
+            onClick={() => setActionsMenuOpen(actionsMenuOpen === item.id ? null : item.id)}
             className="p-2 rounded-full transition-colors"
             style={{ color: "var(--washroom-subtitle)" }}
           >
             <MoreVertical size={18} />
           </button>
-
           {actionsMenuOpen === item.id && (
             <LocationActionsMenu
               item={item}
@@ -560,8 +422,6 @@ function WashroomsPage() {
           )}
         </div>
       </div>
-
-      {/* Metrics */}
       <div className="grid grid-cols-2 gap-4 mb-6">
         <div
           className="rounded-xl p-3"
@@ -581,7 +441,7 @@ function WashroomsPage() {
               className="text-2xl font-bold"
               style={{ color: "var(--washroom-title)" }}
             >
-              {Math.round(item.currentScore * 10) / 10 || "-"}
+              {item.currentScore ? Math.round(item.currentScore * 10) / 10 : "-"}
             </span>
             <span
               className="text-xs font-medium"
@@ -591,7 +451,6 @@ function WashroomsPage() {
             </span>
           </div>
         </div>
-
         <div
           className="rounded-xl p-3"
           style={{
@@ -620,13 +479,9 @@ function WashroomsPage() {
           </div>
         </div>
       </div>
-
-      {/* Footer */}
       <div
         className="flex items-center justify-between pt-4"
-        style={{
-          borderTop: "1px solid var(--washroom-border)",
-        }}
+        style={{ borderTop: "1px solid var(--washroom-border)" }}
       >
         <div
           className="flex items-center gap-2 cursor-pointer"
@@ -654,7 +509,6 @@ function WashroomsPage() {
             {item.status ? "Active" : "Inactive"}
           </span>
         </div>
-
         <div className="text-xs font-medium">
           {renderCleanerBadge(item.name, item.cleaner_assignments)}
         </div>
@@ -664,17 +518,13 @@ function WashroomsPage() {
 
   if (loading) {
     return (
-      <div
-        className="flex justify-center items-center h-screen px-4"
-        // style={{ background: "var(--washroom-bg)" }}
-      >
+      <div className="flex justify-center items-center h-screen px-4">
         <Loader
           size="large"
           color="var(--washroom-primary)"
           message="Loading washrooms..."
         />
       </div>
-
     );
   }
 
@@ -683,10 +533,7 @@ function WashroomsPage() {
       <Toaster position="top-right" />
 
       {/* Main Container */}
-      <div
-        className="min-h-screen p-6 font-sans max-[786px]:flex max-[786px]:items-center max-[786px]:justify-center max-[786px]:mx-auto"
-        // style={{ background: "var(--washroom-bg)" }}
-      >
+      <div className="min-h-screen p-6 font-sans max-[786px]:flex max-[786px]:items-center max-[786px]:justify-center max-[786px]:mx-auto">
         <div className="max-w-[1600px] mx-auto w-full">
           {/* Header Card */}
           <div
@@ -741,12 +588,10 @@ function WashroomsPage() {
                       color: "var(--washroom-primary-text)",
                     }}
                     onMouseEnter={(e) =>
-                    (e.currentTarget.style.background =
-                      "var(--washroom-primary-hover)")
+                      (e.currentTarget.style.background = "var(--washroom-primary-hover)")
                     }
                     onMouseLeave={(e) =>
-                    (e.currentTarget.style.background =
-                      "var(--washroom-primary)")
+                      (e.currentTarget.style.background = "var(--washroom-primary)")
                     }
                   >
                     <Plus strokeWidth={3} className="w-4 h-4" />
@@ -763,12 +608,10 @@ function WashroomsPage() {
                       color: "var(--washroom-primary-text)",
                     }}
                     onMouseEnter={(e) =>
-                    (e.currentTarget.style.background =
-                      "var(--washroom-primary-hover)")
+                      (e.currentTarget.style.background = "var(--washroom-primary-hover)")
                     }
                     onMouseLeave={(e) =>
-                    (e.currentTarget.style.background =
-                      "var(--washroom-primary)")
+                      (e.currentTarget.style.background = "var(--washroom-primary)")
                     }
                   >
                     Assign
@@ -791,7 +634,7 @@ function WashroomsPage() {
             <div className="relative flex-1 w-full xl:w-auto min-w-[300px]">
               <Search
                 style={{ color: "var(--washroom-text-muted)" }}
-                className="absolute left-4 top-1/2 -translate-y-1/2  w-4 h-4"
+                className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4"
               />
               <input
                 type="text"
@@ -810,7 +653,7 @@ function WashroomsPage() {
             <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
               {/* Dropdowns */}
               <select
-                className="px-4 py-2.5 border  rounded-xl text-sm font-semibold  outline-none cursor-pointer min-w-[120px]"
+                className="px-4 py-2.5 border rounded-xl text-sm font-semibold outline-none cursor-pointer min-w-[120px]"
                 style={{
                   background: "var(--washroom-surface)",
                   color: "var(--washroom-text)",
@@ -828,7 +671,7 @@ function WashroomsPage() {
               </select>
 
               <select
-                className="px-4 py-2.5 border  rounded-xl text-sm font-semibold  outline-none cursor-pointer min-w-[140px]"
+                className="px-4 py-2.5 border rounded-xl text-sm font-semibold outline-none cursor-pointer min-w-[140px]"
                 style={{
                   background: "var(--washroom-surface)",
                   color: "var(--washroom-text)",
@@ -852,7 +695,7 @@ function WashroomsPage() {
               </select>
 
               <select
-                className="px-4 py-2.5 border  rounded-xl text-sm font-semibold  outline-none cursor-pointer"
+                className="px-4 py-2.5 border rounded-xl text-sm font-semibold outline-none cursor-pointer"
                 style={{
                   background: "var(--washroom-surface)",
                   color: "var(--washroom-text)",
@@ -933,12 +776,10 @@ function WashroomsPage() {
                         color: "var(--washroom-filter-clear)",
                       }}
                       onMouseEnter={(e) =>
-                      (e.currentTarget.style.color =
-                        "var(--washroom-filter-clear-hover)")
+                        (e.currentTarget.style.color = "var(--washroom-filter-clear-hover)")
                       }
                       onMouseLeave={(e) =>
-                      (e.currentTarget.style.color =
-                        "var(--washroom-filter-clear)")
+                        (e.currentTarget.style.color = "var(--washroom-filter-clear)")
                       }
                     >
                       <XCircle size={18} />
@@ -954,7 +795,7 @@ function WashroomsPage() {
                   border: "1px solid var(--washroom-border)",
                 }}
               >
-                {filteredList.length} of {list.length}
+                {filteredList.length} of {rawList.length}
               </span>
 
               <div
@@ -977,9 +818,7 @@ function WashroomsPage() {
                         color: "var(--washroom-primary-text)",
                         boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
                       }
-                      : {
-                        color: "var(--washroom-subtitle)",
-                      }
+                      : { color: "var(--washroom-subtitle)" }
                   }
                 >
                   <Grid3x3 className="h-5 w-5" />
@@ -998,9 +837,7 @@ function WashroomsPage() {
                         color: "var(--washroom-primary-text)",
                         boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
                       }
-                      : {
-                        color: "var(--washroom-subtitle)",
-                      }
+                      : { color: "var(--washroom-subtitle)" }
                   }
                 >
                   <List className="h-5 w-5" />
@@ -1021,9 +858,7 @@ function WashroomsPage() {
             >
               <div
                 className="w-24 h-24 mx-auto mb-6 rounded-full flex items-center justify-center"
-                style={{
-                  background: "var(--washroom-filter-bg)",
-                }}
+                style={{ background: "var(--washroom-filter-bg)" }}
               >
                 <MapPin
                   className="h-12 w-12"
@@ -1063,7 +898,7 @@ function WashroomsPage() {
                       boxShadow: "var(--washroom-shadow)",
                     }}
                   >
-                    {/* Grid Header - FIXED WIDTHS to prevent scroll */}
+                    {/* Grid Header */}
                     <div
                       className="grid grid-cols-[60px_2fr_1.2fr_100px_100px_1.5fr_1fr_120px_90px] gap-2 px-6 py-4 text-[11px] font-bold uppercase tracking-widest items-center"
                       style={{
@@ -1116,9 +951,7 @@ function WashroomsPage() {
                     </div>
 
                     {/* Grid Body */}
-                    <div
-                      className="divide-y-0" // Removed divide-y
-                    >
+                    <div className="divide-y-0">
                       {filteredList.map((item, index) => (
                         <div
                           key={item.id}
@@ -1150,8 +983,7 @@ function WashroomsPage() {
                               className="text-[10px] mt-0.5 truncate"
                               style={{ color: "var(--washroom-text-muted)" }}
                             >
-                              ID: {item.id} •{" "}
-                              {new Date(item.created_at).toLocaleDateString()}
+                              ID: {item.id} • {new Date(item.created_at).toLocaleDateString()}
                             </p>
                           </div>
 
@@ -1246,8 +1078,7 @@ function WashroomsPage() {
                                   className="h-2 w-2 rounded-full"
                                   style={{
                                     background:
-                                      item.status === true ||
-                                        item.status === null
+                                      item.status === true || item.status === null
                                         ? "var(--washroom-status-dot-active)"
                                         : "var(--washroom-status-dot-inactive)",
                                   }}
@@ -1272,12 +1103,10 @@ function WashroomsPage() {
                               className="p-2 rounded-lg transition-colors"
                               style={{ color: "var(--washroom-icon-muted)" }}
                               onMouseEnter={(e) =>
-                              (e.currentTarget.style.background =
-                                "var(--washroom-muted-bg)")
+                                (e.currentTarget.style.background = "var(--washroom-muted-bg)")
                               }
                               onMouseLeave={(e) =>
-                              (e.currentTarget.style.background =
-                                "transparent")
+                                (e.currentTarget.style.background = "transparent")
                               }
                             >
                               <Navigation size={16} />
@@ -1285,31 +1114,21 @@ function WashroomsPage() {
 
                             <div
                               className="relative"
-                              ref={
-                                actionsMenuOpen === item.id
-                                  ? actionsMenuRef
-                                  : null
-                              }
+                              ref={actionsMenuOpen === item.id ? actionsMenuRef : null}
                             >
                               <button
                                 onClick={() =>
                                   setActionsMenuOpen(
-                                    actionsMenuOpen === item.id
-                                      ? null
-                                      : item.id,
+                                    actionsMenuOpen === item.id ? null : item.id,
                                   )
                                 }
                                 className="p-2 rounded-lg transition-colors"
-                                style={{
-                                  color: "var(--washroom-icon-muted)",
-                                }}
+                                style={{ color: "var(--washroom-icon-muted)" }}
                                 onMouseEnter={(e) =>
-                                (e.currentTarget.style.background =
-                                  "var(--washroom-muted-bg)")
+                                  (e.currentTarget.style.background = "var(--washroom-muted-bg)")
                                 }
                                 onMouseLeave={(e) =>
-                                (e.currentTarget.style.background =
-                                  "transparent")
+                                  (e.currentTarget.style.background = "transparent")
                                 }
                               >
                                 <MoreVertical size={16} />
@@ -1320,9 +1139,7 @@ function WashroomsPage() {
                                   item={item}
                                   location_id={item.id}
                                   onClose={() => setActionsMenuOpen(null)}
-                                  onDelete={(location) =>
-                                    setDeleteModal({ open: true, location })
-                                  }
+                                  onDelete={(location) => setDeleteModal({ open: true, location })}
                                   canDeleteLocation={canDeleteLocation}
                                   canEditLocation={canEditLocation}
                                 />
@@ -1357,7 +1174,7 @@ function WashroomsPage() {
                 </div>
               </div>
 
-              {/* --- MODALS (Re-styled but logic preserved) --- */}
+              {/* --- MODALS --- */}
 
               {cleanerModal.open && (
                 <div
@@ -1366,9 +1183,7 @@ function WashroomsPage() {
                     background: "rgba(0,0,0,0.35)",
                     backdropFilter: "blur(4px)",
                   }}
-                  onClick={() =>
-                    setCleanerModal({ open: false, location: null })
-                  }
+                  onClick={() => setCleanerModal({ open: false, location: null })}
                 >
                   <div
                     className="rounded-xl max-w-md w-full max-h-[85vh] overflow-y-auto p-6"
@@ -1388,9 +1203,7 @@ function WashroomsPage() {
                         {cleanerModal.location?.name} – Assigned Cleaners
                       </h3>
                       <button
-                        onClick={() =>
-                          setCleanerModal({ open: false, location: null })
-                        }
+                        onClick={() => setCleanerModal({ open: false, location: null })}
                         className="transition-colors"
                         style={{ color: "var(--washroom-subtitle)" }}
                       >
@@ -1402,7 +1215,6 @@ function WashroomsPage() {
                     <div className="space-y-3">
                       {cleanerModal.location?.cleaners?.map((assignment) => {
                         const isActive = assignment.status === "assigned";
-
                         return (
                           <div
                             key={assignment.id}
@@ -1429,7 +1241,6 @@ function WashroomsPage() {
                               )}
                             </div>
 
-                            {/* Status pill */}
                             <span
                               className="text-xs px-2 py-1 rounded-full font-medium"
                               style={
@@ -1478,7 +1289,7 @@ function WashroomsPage() {
                         className="p-3 rounded-full"
                         style={
                           statusModal.location?.status === true ||
-                            statusModal.location?.status === null
+                          statusModal.location?.status === null
                             ? {
                               background: "var(--washroom-status-inactive-bg)",
                               border: `1px solid var(--washroom-status-inactive-border)`,
@@ -1490,7 +1301,7 @@ function WashroomsPage() {
                         }
                       >
                         {statusModal.location?.status === true ||
-                          statusModal.location?.status === null ? (
+                        statusModal.location?.status === null ? (
                           <PowerOff
                             className="h-6 w-6"
                             style={{ color: "var(--washroom-status-inactive-text)" }}
@@ -1509,7 +1320,7 @@ function WashroomsPage() {
                           style={{ color: "var(--washroom-title)" }}
                         >
                           {statusModal.location?.status === true ||
-                            statusModal.location?.status === null
+                          statusModal.location?.status === null
                             ? "Disable"
                             : "Enable"}{" "}
                           Washroom
@@ -1532,7 +1343,7 @@ function WashroomsPage() {
                         Are you sure you want to{" "}
                         <strong>
                           {statusModal.location?.status === true ||
-                            statusModal.location?.status === null
+                          statusModal.location?.status === null
                             ? "disable"
                             : "enable"}
                         </strong>{" "}
@@ -1542,20 +1353,20 @@ function WashroomsPage() {
                       {/* Disable warning */}
                       {(statusModal.location?.status === true ||
                         statusModal.location?.status === null) && (
-                          <div
-                            className="mt-3 p-3 rounded-md text-sm"
-                            style={{
-                              background: "var(--washroom-status-inactive-bg)",
-                              border: `1px solid var(--washroom-status-inactive-border)`,
-                              color: "var(--washroom-status-inactive-text)",
-                            }}
-                          >
-                            ⚠️ Disabling this washroom will automatically{" "}
-                            <strong>unassign all cleaners</strong>.
-                            <br />
-                            They must be <strong>manually re-assigned</strong> when enabled again.
-                          </div>
-                        )}
+                        <div
+                          className="mt-3 p-3 rounded-md text-sm"
+                          style={{
+                            background: "var(--washroom-status-inactive-bg)",
+                            border: `1px solid var(--washroom-status-inactive-border)`,
+                            color: "var(--washroom-status-inactive-text)",
+                          }}
+                        >
+                          ⚠️ Disabling this washroom will automatically{" "}
+                          <strong>unassign all cleaners</strong>.
+                          <br />
+                          They must be <strong>manually re-assigned</strong> when enabled again.
+                        </div>
+                      )}
 
                       {/* Enable info */}
                       {statusModal.location?.status === false && (
@@ -1577,9 +1388,7 @@ function WashroomsPage() {
                     {/* Actions */}
                     <div className="flex gap-3 justify-end">
                       <button
-                        onClick={() =>
-                          setStatusModal({ open: false, location: null })
-                        }
+                        onClick={() => setStatusModal({ open: false, location: null })}
                         className="px-4 py-2 rounded-lg transition-colors"
                         style={{
                           color: "var(--washroom-filter-text)",
@@ -1591,30 +1400,29 @@ function WashroomsPage() {
 
                       <button
                         onClick={confirmStatusToggle}
-                        disabled={togglingStatus === statusModal.location?.id}
+                        disabled={togglingStatus}
                         className="px-4 py-2 rounded-lg text-white flex items-center gap-2 transition-colors"
                         style={{
                           background:
                             statusModal.location?.status === true ||
-                              statusModal.location?.status === null
+                            statusModal.location?.status === null
                               ? "var(--washroom-delete-bg)"
                               : "var(--washroom-primary)",
                         }}
                       >
-                        {togglingStatus === statusModal.location?.id && (
+                        {togglingStatus && (
                           <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         )}
-                        {togglingStatus === statusModal.location?.id
+                        {togglingStatus
                           ? "Processing..."
                           : statusModal.location?.status === true ||
                             statusModal.location?.status === null
-                            ? "Disable"
-                            : "Enable"}
+                          ? "Disable"
+                          : "Enable"}
                       </button>
                     </div>
                   </div>
                 </div>
-
               )}
 
               {deleteModal.open && (
@@ -1689,9 +1497,7 @@ function WashroomsPage() {
                     {/* Actions */}
                     <div className="flex gap-3 justify-end">
                       <button
-                        onClick={() =>
-                          setDeleteModal({ open: false, location: null })
-                        }
+                        onClick={() => setDeleteModal({ open: false, location: null })}
                         disabled={deleting}
                         className="px-4 py-2 rounded-lg transition-colors"
                         style={{
@@ -1718,7 +1524,6 @@ function WashroomsPage() {
                     </div>
                   </div>
                 </div>
-
               )}
             </div>
           )}

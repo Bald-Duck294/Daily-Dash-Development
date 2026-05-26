@@ -231,13 +231,13 @@
 
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
-  useCompaniesCount, // NEW: Separate count query
-  useCompanies, // Paginated query (not used in dashboard)
+  useCompaniesCount, 
 } from "@/features/companies/queries/companies.queries";
-import { UsersApi } from "@/features/users/users.api";
+// ✅ Import the TanStack query hook for users
+import { useGetAllUsers } from "@/features/users/users.queries";
 import {
   Building,
   Shield,
@@ -317,61 +317,31 @@ function StatCard({ label, value, href, loading, accent, icon: Icon }) {
 }
 
 export default function DashboardPage() {
-  const [counts, setCounts] = useState({
-    companies: 0,
-    superadmin: 0,
-    admin: 0,
-    supervisor: 0,
-    cleaner: 0,
-  });
-
-  // SEPARATE QUERIES - No conflicts!
+  // 1. Fetch Companies Count
   const { data: companiesCountData, isLoading: companiesCountLoading } =
-    useCompaniesCount(); // NEW: Lightweight count query
+    useCompaniesCount();
 
-  // console.log(companiesCountData, "data");
+  // 2. Fetch All Users via TanStack Query
+  const { data: allUsers = [], isLoading: usersLoading } = useGetAllUsers();
 
-  // Get users count (consider making this a query too)
-  const [usersCounts, setUsersCounts] = useState({
-    superadmin: 0,
-    admin: 0,
-    supervisor: 0,
-    cleaner: 0,
-  });
+  // 3. Process User Counts Efficiently
+  // useMemo prevents recalculating counts unless the raw users array changes
+  const usersCounts = useMemo(() => {
+    return {
+      superadmin: allUsers.filter((u) => u.role_id === 1).length,
+      admin: allUsers.filter((u) => u.role_id === 2).length,
+      supervisor: allUsers.filter((u) => u.role_id === 3).length,
+      cleaner: allUsers.filter((u) => u.role_id === 5).length,
+    };
+  }, [allUsers]);
 
-  // Load users once
-  useEffect(() => {
-    async function loadUsers() {
-      try {
-        const usersRes = await UsersApi.getAllUsers();
-        const users = usersRes?.data || [];
-
-        setUsersCounts({
-          superadmin: users.filter((u) => u.role_id === 1).length,
-          admin: users.filter((u) => u.role_id === 2).length,
-          supervisor: users.filter((u) => u.role_id === 3).length,
-          cleaner: users.filter((u) => u.role_id === 5).length,
-        });
-      } catch (err) {
-        console.error("Failed to load users for dashboard:", err);
-      }
-    }
-
-    loadUsers();
-  }, []);
-
-  // Update companies count when it loads
-  // useEffect(() => {
-  //   setCounts((prev) => ({
-  //     ...prev,
-  //     companies: companiesCountData?.totalCount || 0,
-  //   }));
-  // },[companiesCountData.totalCount]);
+  // Combined Loading State for the cards
+  const isLoading = companiesCountLoading || usersLoading;
 
   const cards = [
     {
       label: "Organizations",
-      value: companiesCountData?.totalCount || 0, // Use count from separate query,
+      value: companiesCountData?.totalCount || 0,
       href: "/companies",
       accent: "var(--accent-blue)",
       icon: Building,
@@ -405,8 +375,6 @@ export default function DashboardPage() {
       icon: Users,
     },
   ];
-
-  const isLoading = companiesCountLoading;
 
   return (
     <div className="space-y-6 sm:space-y-8 rounded-3xl p-4 sm:p-6 lg:p-8 bg-[var(--background)] relative">

@@ -2119,25 +2119,33 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSelector } from "react-redux";
 import toast, { Toaster } from "react-hot-toast";
 import { useRouter } from "next/navigation";
-import { UsersApi } from "@/features/users/users.api";
-import { LocationsApi } from "@/features/locations/locations.api";
 import { AssignmentsApi } from "@/features/assignments/assignments.api";
+
+// Providers & Hooks
 import { useCompanyId } from "@/providers/CompanyProvider";
 import { usePermissions } from "@/shared/hooks/usePermission";
 import { useRequirePermission } from "@/shared/hooks/useRequirePermission";
 import { MODULES } from "@/shared/constants/permissions";
+
+// TanStack Query Hooks
+import { useGetAllUsers } from "@/features/users/users.queries";
+import { useGetAllLocations } from "@/features/locations/locations.queries";
+import {
+  useAssignmentsByCleanerId,
+  useCreateAssignment,
+} from "@/features/assignments/assignments.queries";
+import { useGetAllRoles } from "@/features/roles/queries/roles.queries";
+
 import {
   User,
   MapPin,
   Search,
   ChevronDown,
   X,
-  CheckSquare,
-  Square,
   Users,
   AlertCircle,
   Loader,
@@ -2147,7 +2155,6 @@ import {
   ShieldCheck,
   ClipboardPlus,
 } from "lucide-react";
-import Link from "next/link";
 
 const AddAssignmentPage = () => {
   useRequirePermission(MODULES.ASSIGNMENTS);
@@ -2161,19 +2168,12 @@ const AddAssignmentPage = () => {
   const [selectedLocations, setSelectedLocations] = useState([]);
   const [singleUser, setSingleUser] = useState("");
 
-  const [allUsers, setAllUsers] = useState([]);
-  const [allLocations, setAllLocations] = useState([]);
-  const [availableLocations, setAvailableLocations] = useState([]);
-  const [userAssignedLocations, setUserAssignedLocations] = useState([]);
-
   const [userSearchTerm, setUserSearchTerm] = useState("");
   const [locationSearchTerm, setLocationSearchTerm] = useState("");
   const [selectedRoleFilter, setSelectedRoleFilter] = useState("all");
 
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
   const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isFetchingAssignments, setIsFetchingAssignments] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
 
   const { user: loggedInUser } = useSelector((state) => state.auth);
@@ -2182,14 +2182,66 @@ const AddAssignmentPage = () => {
   const userDropdownRef = useRef(null);
   const locationDropdownRef = useRef(null);
   const router = useRouter();
-
-  const assignableUsers = allUsers.filter(
-    (u) => u.role_id !== 1 && u.role_id !== 2,
+  const ROLE_HIERARCHY = {
+    1: { name: "Superadmin", level: 1 },
+    2: { name: "Admin", level: 2 },
+    6: { name: "Zonal Admin", level: 3 },
+    8: { name: "Facility Admin", level: 3 },
+    3: { name: "Supervisor", level: 4 },
+    7: { name: "Facility Supv", level: 4 },
+    5: { name: "Cleaner", level: 5 },
+  };
+  // --- TANSTACK QUERIES ---
+  const { data: allUsers = [], isLoading: isLoadingUsers } = useGetAllUsers(
+    { companyId },
+    { enabled: !!companyId },
   );
-  const uniqueRoles = [
-    ...new Set(assignableUsers.map((u) => u.role?.name).filter(Boolean)),
-  ];
+  const { data: allLocations = [], isLoading: isLoadingLocations } =
+    useGetAllLocations(companyId);
+  const { data: allRoles = [], isLoading: isLoadingRoles } = useGetAllRoles();
+  // Only runs when singleUser has a value
+  const {
+    data: singleUserAssignmentsData = [],
+    isLoading: isFetchingAssignments,
+  } = useAssignmentsByCleanerId(singleUser, companyId, false);
 
+  // --- TANSTACK MUTATIONS ---
+  const createAssignmentMutation = useCreateAssignment();
+
+  // --- DERIVED STATE & MEMOS ---
+  const isDataLoading = isLoadingUsers || isLoadingLocations || isLoadingRoles;
+  const currentUserRoleId = parseInt(loggedInUser?.role_id);
+  const currentUserRole = ROLE_HIERARCHY[currentUserRoleId] || { level: 99 };
+  const assignableUsers = useMemo(() => {
+    return allUsers.filter((u) => {
+      const uRoleId = parseInt(u.role_id);
+      const uRoleData = ROLE_HIERARCHY[uRoleId];
+      return uRoleData && uRoleData.level > currentUserRole.level;
+    });
+  }, [allUsers, currentUserRole]);
+
+  // Filter unique roles based on hierarchy
+  const uniqueRoles = useMemo(() => {
+    const roles = [
+      ...new Set(assignableUsers.map((u) => u.role?.name).filter(Boolean)),
+    ];
+    return roles;
+  }, [assignableUsers]);
+
+  // Derive available locations for Single User Mode
+  const userAssignedLocations = useMemo(() => {
+    if (assignmentMode !== "single" || !singleUser) return [];
+    return singleUserAssignmentsData.map((a) => a.location_id);
+  }, [singleUserAssignmentsData, assignmentMode, singleUser]);
+
+  const availableLocations = useMemo(() => {
+    if (assignmentMode !== "single" || !singleUser) return allLocations;
+    return allLocations.filter(
+      (loc) => !userAssignedLocations.includes(loc.id),
+    );
+  }, [allLocations, userAssignedLocations, assignmentMode, singleUser]);
+
+  // --- UI HELPERS ---
   const getRoleColor = (roleName) => {
     if (!roleName)
       return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
@@ -2212,64 +2264,6 @@ const AddAssignmentPage = () => {
     }
   };
 
-  // --- DATA FETCHING ---
-  useEffect(() => {
-    if (!companyId) return;
-
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        const userRes = await UsersApi.getAllUsers(companyId);
-        const locationRes = await LocationsApi.getAllLocations(companyId);
-
-        if (userRes.success) setAllUsers(userRes.data || []);
-        if (locationRes.success) setAllLocations(locationRes.data || []);
-      } catch (err) {
-        console.error("❌ Error while fetching:", err);
-        toast.error("Failed to load data");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [companyId]);
-
-  // --- FETCH ASSIGNED LOCATIONS FOR SINGLE USER MODE ---
-  useEffect(() => {
-    if (assignmentMode === "single" && singleUser) {
-      fetchUserAssignments(singleUser);
-    } else {
-      setAvailableLocations(allLocations);
-    }
-  }, [singleUser, assignmentMode, allLocations]);
-
-  const fetchUserAssignments = async (userId) => {
-    setIsFetchingAssignments(true);
-    try {
-      const response = await AssignmentsApi.getAssignmentsByCleanerId(
-        userId,
-        companyId,
-      );
-
-      if (response.success) {
-        const assignedLocationIds = response.data.map((a) => a.location_id);
-        setUserAssignedLocations(assignedLocationIds);
-
-        const unassignedLocations = allLocations.filter(
-          (loc) => !assignedLocationIds.includes(loc.id),
-        );
-        setAvailableLocations(unassignedLocations);
-      }
-    } catch (error) {
-      console.error("Error fetching user assignments:", error);
-      toast.error("Failed to load user assignments");
-      setAvailableLocations(allLocations);
-    } finally {
-      setIsFetchingAssignments(false);
-    }
-  };
-
   // --- VALIDATE ASSIGNMENTS BEFORE SUBMIT ---
   const validateAssignments = async () => {
     setIsValidating(true);
@@ -2282,6 +2276,9 @@ const AddAssignmentPage = () => {
           : [assignableUsers.find((u) => u.id === singleUser)];
 
       for (const user of usersToCheck) {
+        if (!user) continue;
+
+        // Use direct API call for imperative pre-flight validation
         const response = await AssignmentsApi.getAssignmentsByCleanerId(
           user.id,
           companyId,
@@ -2345,8 +2342,7 @@ const AddAssignmentPage = () => {
 
   // --- HANDLERS ---
   const handleModeToggle = () => {
-    const newMode = assignmentMode === "multi" ? "single" : "multi";
-    setAssignmentMode(newMode);
+    setAssignmentMode((prev) => (prev === "multi" ? "single" : "multi"));
   };
 
   const handleUserSelect = (user) => {
@@ -2392,12 +2388,10 @@ const AddAssignmentPage = () => {
   };
 
   const handleSelectAllUsers = () => {
-    const usersToSelect = filteredUsers;
-
-    if (selectedUsers.length === usersToSelect.length) {
+    if (selectedUsers.length === filteredUsers.length) {
       setSelectedUsers([]);
     } else {
-      setSelectedUsers(usersToSelect);
+      setSelectedUsers(filteredUsers);
     }
   };
 
@@ -2454,21 +2448,18 @@ const AddAssignmentPage = () => {
         ),
         { duration: Infinity, style: { maxWidth: "500px" } },
       );
-
       return;
     }
 
-    setIsLoading(true);
+    let successCount = 0;
+    let failureCount = 0;
+    const errors = [];
 
     try {
-      let successCount = 0;
-      let failureCount = 0;
-      const errors = [];
-
       if (assignmentMode === "multi") {
         const promises = selectedUsers.map(async (user) => {
           try {
-            const response = await AssignmentsApi.createAssignment({
+            const response = await createAssignmentMutation.mutateAsync({
               cleaner_user_id: user.id,
               location_ids: selectedLocations.map((loc) => loc.id),
               status: "assigned",
@@ -2476,14 +2467,8 @@ const AddAssignmentPage = () => {
               role_id: user.role_id,
             });
 
-            if (response.success) {
-              successCount += response.data?.data?.created || 0;
-              return { success: true, user: user.name };
-            } else {
-              failureCount++;
-              errors.push(`${user.name}: ${response.error}`);
-              return { success: false, user: user.name, error: response.error };
-            }
+            successCount += response?.data?.created || 0;
+            return { success: true, user: user.name };
           } catch (error) {
             failureCount++;
             errors.push(`${user.name}: ${error.message}`);
@@ -2496,27 +2481,27 @@ const AddAssignmentPage = () => {
         const selectedUserData = assignableUsers.find(
           (u) => u.id === singleUser,
         );
-        const response = await AssignmentsApi.createAssignment({
-          cleaner_user_id: singleUser,
-          location_ids: selectedLocations.map((loc) => loc.id),
-          status: "assigned",
-          company_id: companyId,
-          role_id: selectedUserData?.role_id,
-        });
 
-        if (response.success) {
-          successCount = response.data?.data?.created || 0;
-        } else {
+        try {
+          const response = await createAssignmentMutation.mutateAsync({
+            cleaner_user_id: singleUser,
+            location_ids: selectedLocations.map((loc) => loc.id),
+            status: "assigned",
+            company_id: companyId,
+            role_id: selectedUserData?.role_id,
+          });
+
+          successCount = response?.data?.created || 0;
+        } catch (error) {
           failureCount++;
-          errors.push(response.error);
+          errors.push(error.message);
         }
       }
 
       // Show results
       if (successCount > 0 && failureCount === 0) {
         toast.success(
-          `Successfully created ${successCount} assignment${successCount !== 1 ? "s" : ""
-          }!`,
+          `Successfully created ${successCount} assignment${successCount !== 1 ? "s" : ""}!`,
         );
 
         setSelectedUsers([]);
@@ -2563,35 +2548,7 @@ const AddAssignmentPage = () => {
           { duration: Infinity, style: { maxWidth: "500px" } },
         );
       } else {
-        toast.error(
-          (t) => (
-            <div className="max-w-md">
-              <div className="flex items-start gap-2 mb-2">
-                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-red-800 mb-1">
-                    Assignment Failed
-                  </p>
-                  <div className="text-sm text-red-700 space-y-1">
-                    {errors.slice(0, 3).map((error, idx) => (
-                      <p key={idx}>• {error}</p>
-                    ))}
-                    {errors.length > 3 && (
-                      <p>• ...and {errors.length - 3} more errors</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => toast.dismiss(t.id)}
-                className="mt-2 w-full px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
-              >
-                Dismiss
-              </button>
-            </div>
-          ),
-          { duration: Infinity, style: { maxWidth: "500px" } },
-        );
+        throw new Error(errors[0] || "Assignment creation failed");
       }
     } catch (error) {
       console.error("Error creating assignments:", error);
@@ -2610,11 +2567,10 @@ const AddAssignmentPage = () => {
         ),
         { duration: Infinity },
       );
-    } finally {
-      setIsLoading(false);
     }
   };
 
+  // --- FILTER MEMOS ---
   const filteredUsers = assignableUsers.filter((user) => {
     const matchesSearch = user.name
       .toLowerCase()
@@ -2645,22 +2601,15 @@ const AddAssignmentPage = () => {
       <Toaster position="top-center" />
       <div
         className="min-h-screen w-full py-4 sm:py-6 px-4 sm:px-6 md:px-8 flex flex-col items-center relative "
-        style={{
-          background: "var(--assignment-bg)",
-        }}
+        style={{ background: "var(--assignment-bg)" }}
       >
-
         {/* Background Decorative Blur */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div
-            className="absolute top-0 right-0 w-40 h-40 sm:w-48 sm:h-48 md:w-56 md:h-56 
-               rounded-full blur-3xl opacity-50 
-               translate-x-1/2 -translate-y-1/2"
+            className="absolute top-0 right-0 w-40 h-40 sm:w-48 sm:h-48 md:w-56 md:h-56 rounded-full blur-3xl opacity-50 translate-x-1/2 -translate-y-1/2"
             style={{ background: "var(--assignment-accent-bg)" }}
           />
         </div>
-
-
 
         {/* Back Button */}
         <div className="absolute top-4 sm:top-6 md:top-8 left-4 sm:left-6 md:left-8 z-20">
@@ -2682,10 +2631,8 @@ const AddAssignmentPage = () => {
           </button>
         </div>
 
-
         {/* Main Card */}
         <div className="max-w-2xl w-full relative z-10">
-          {/* visual card */}
           <div
             className="rounded-2xl"
             style={{
@@ -2694,7 +2641,6 @@ const AddAssignmentPage = () => {
               boxShadow: "var(--assignment-shadow)",
             }}
           >
-
             {/* Card Header */}
             <div
               className="px-4 sm:px-6 py-3 sm:py-4 flex justify-between items-center"
@@ -2716,13 +2662,11 @@ const AddAssignmentPage = () => {
                   Create Assignments
                 </h1>
               </div>
-
               <div
                 className="h-2 w-2 rounded-full animate-pulse"
                 style={{ background: "var(--assignment-success-dot)" }}
               />
             </div>
-
 
             <form
               onSubmit={handleSubmit}
@@ -2762,9 +2706,10 @@ const AddAssignmentPage = () => {
                       className="text-xs sm:text-sm font-black uppercase tracking-tight transition-colors duration-300"
                       style={{ color: "var(--assignment-title)" }}
                     >
-                      {assignmentMode === "multi" ? "Multiple Mode" : "Single Mode"}
+                      {assignmentMode === "multi"
+                        ? "Multiple Mode"
+                        : "Single Mode"}
                     </h3>
-
                     <p
                       className="text-[10px] sm:text-xs font-bold transition-colors duration-300"
                       style={{ color: "var(--assignment-subtitle)" }}
@@ -2822,8 +2767,7 @@ const AddAssignmentPage = () => {
                 </button>
               </div>
 
-
-              {/* Filter by Role - ENHANCED WITH BETTER SHADOW AND VISIBILITY */}
+              {/* Filter by Role */}
               <div
                 className="text-left space-y-3 p-4 sm:p-5 rounded-xl shadow-md"
                 style={{
@@ -2840,7 +2784,6 @@ const AddAssignmentPage = () => {
                 </p>
 
                 <div className="flex flex-wrap gap-2">
-                  {/* ALL ROLES */}
                   <button
                     type="button"
                     onClick={() => setSelectedRoleFilter("all")}
@@ -2867,7 +2810,6 @@ const AddAssignmentPage = () => {
                     All Roles
                   </button>
 
-                  {/* ROLE BUTTONS */}
                   {uniqueRoles.map((role) => (
                     <button
                       key={role}
@@ -2899,7 +2841,6 @@ const AddAssignmentPage = () => {
                 </div>
               </div>
 
-
               {/* Permission Warning */}
               {!canAddAssignment && (
                 <div
@@ -2917,14 +2858,13 @@ const AddAssignmentPage = () => {
                     />
                     <div>
                       <p className="text-sm font-semibold">
-                        You don&apos;t have permission to create assignments. Please contact your
-                        administrator.
+                        You don&apos;t have permission to create assignments.
+                        Please contact your administrator.
                       </p>
                     </div>
                   </div>
                 </div>
               )}
-
 
               {/* User Selection */}
               <div className="text-left space-y-2" ref={userDropdownRef}>
@@ -2948,12 +2888,11 @@ const AddAssignmentPage = () => {
                       value={
                         assignmentMode === "multi"
                           ? selectedUsers.length > 0
-                            ? `${selectedUsers.length} user${selectedUsers.length > 1 ? "s" : ""
-                            } selected`
+                            ? `${selectedUsers.length} user${selectedUsers.length > 1 ? "s" : ""} selected`
                             : "Click to select users..."
                           : singleUser
-                            ? assignableUsers.find((u) => u.id === singleUser)?.name ||
-                            "Select a user..."
+                            ? assignableUsers.find((u) => u.id === singleUser)
+                                ?.name || "Select a user..."
                             : "Select a user..."
                       }
                       placeholder={
@@ -2972,13 +2911,12 @@ const AddAssignmentPage = () => {
                     <ChevronDown
                       size={18}
                       strokeWidth={2.5}
-                      className={`absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 transition-transform duration-300 ${isUserDropdownOpen ? "rotate-180" : ""
-                        }`}
+                      className={`absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 transition-transform duration-300 ${isUserDropdownOpen ? "rotate-180" : ""}`}
                       style={{ color: "var(--assignment-subtitle)" }}
                     />
                   </div>
 
-                  {/* DROPDOWN */}
+                  {/* USER DROPDOWN */}
                   {isUserDropdownOpen && (
                     <div
                       className="absolute left-0 right-0 top-full mt-3 z-50 rounded-xl overflow-hidden flex flex-col"
@@ -2988,11 +2926,12 @@ const AddAssignmentPage = () => {
                         boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
                       }}
                     >
-
                       {/* SEARCH */}
                       <div
                         className="p-3 flex-shrink-0"
-                        style={{ borderBottom: "1px solid var(--assignment-divider)" }}
+                        style={{
+                          borderBottom: "1px solid var(--assignment-divider)",
+                        }}
                       >
                         <div className="relative">
                           <Search
@@ -3008,7 +2947,8 @@ const AddAssignmentPage = () => {
                             className="w-full pl-10 pr-4 py-2 text-sm rounded-lg outline-none"
                             style={{
                               background: "var(--assignment-input-bg)",
-                              border: "1px solid var(--assignment-input-border)",
+                              border:
+                                "1px solid var(--assignment-input-border)",
                               color: "var(--assignment-input-text)",
                             }}
                             onClick={(e) => e.stopPropagation()}
@@ -3020,7 +2960,9 @@ const AddAssignmentPage = () => {
                       {assignmentMode === "multi" && (
                         <div
                           className="p-2 flex-shrink-0"
-                          style={{ borderBottom: "1px solid var(--assignment-divider)" }}
+                          style={{
+                            borderBottom: "1px solid var(--assignment-divider)",
+                          }}
                         >
                           <label className="flex items-center gap-2 px-2 py-1.5 cursor-pointer rounded-lg transition-colors">
                             <input
@@ -3044,7 +2986,15 @@ const AddAssignmentPage = () => {
                         className="overflow-y-auto "
                         style={{ minHeight: "150px", maxHeight: "320px" }}
                       >
-                        {filteredUsers.length === 0 ? (
+                        {isDataLoading ? (
+                          <div
+                            className="p-4 flex items-center justify-center gap-2 text-sm"
+                            style={{ color: "var(--assignment-subtitle)" }}
+                          >
+                            <Loader className="w-4 h-4 animate-spin" /> Loading
+                            users...
+                          </div>
+                        ) : filteredUsers.length === 0 ? (
                           <div
                             className="p-4 text-center text-sm"
                             style={{ color: "var(--assignment-subtitle)" }}
@@ -3070,7 +3020,11 @@ const AddAssignmentPage = () => {
                                 }}
                               >
                                 {assignmentMode === "multi" ? (
-                                  <input type="checkbox" checked={isSelected} readOnly />
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    readOnly
+                                  />
                                 ) : (
                                   <div
                                     className="w-4 h-4 rounded-full border-2 flex items-center justify-center"
@@ -3086,7 +3040,10 @@ const AddAssignmentPage = () => {
                                     {isSelected && (
                                       <div
                                         className="w-2 h-2 rounded-full"
-                                        style={{ background: "var(--assignment-accent-text)" }}
+                                        style={{
+                                          background:
+                                            "var(--assignment-accent-text)",
+                                        }}
                                       />
                                     )}
                                   </div>
@@ -3095,22 +3052,24 @@ const AddAssignmentPage = () => {
                                 <div className="flex-1">
                                   <p
                                     className="text-sm font-medium"
-                                    style={{ color: "var(--assignment-input-text)" }}
+                                    style={{
+                                      color: "var(--assignment-input-text)",
+                                    }}
                                   >
                                     {user.name}
                                   </p>
                                   <p
                                     className="text-xs"
-                                    style={{ color: "var(--assignment-subtitle)" }}
+                                    style={{
+                                      color: "var(--assignment-subtitle)",
+                                    }}
                                   >
                                     {user.email}
                                   </p>
                                 </div>
 
                                 <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getRoleColor(
-                                    user.role?.name,
-                                  )}`}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getRoleColor(user.role?.name)}`}
                                 >
                                   {user.role?.name || "No Role"}
                                 </span>
@@ -3148,20 +3107,18 @@ const AddAssignmentPage = () => {
                           >
                             {user.name}
                           </span>
-
                           <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded-full ${getRoleColor(
-                              user.role?.name,
-                            )}`}
+                            className={`text-[9px] px-1.5 py-0.5 rounded-full ${getRoleColor(user.role?.name)}`}
                           >
                             {user.role?.name}
                           </span>
-
                           <button
                             type="button"
                             onClick={() => handleRemoveUser(user.id)}
                             className="p-0.5 rounded-full transition-colors"
-                            style={{ color: "var(--assignment-chip-remove-hover)" }}
+                            style={{
+                              color: "var(--assignment-chip-remove-hover)",
+                            }}
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -3193,17 +3150,14 @@ const AddAssignmentPage = () => {
                       >
                         {assignableUsers.find((u) => u.id === singleUser)?.name}
                       </span>
-
                       <span
-                        className={`text-[9px] px-1.5 py-0.5 rounded-full ${getRoleColor(
-                          assignableUsers.find((u) => u.id === singleUser)?.role?.name,
-                        )}`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded-full ${getRoleColor(assignableUsers.find((u) => u.id === singleUser)?.role?.name)}`}
                       >
                         {
-                          assignableUsers.find((u) => u.id === singleUser)?.role?.name
+                          assignableUsers.find((u) => u.id === singleUser)?.role
+                            ?.name
                         }
                       </span>
-
                       <button
                         type="button"
                         onClick={() => {
@@ -3219,7 +3173,6 @@ const AddAssignmentPage = () => {
                   </div>
                 )}
               </div>
-
 
               {/* Location Selection */}
               <div className="text-left space-y-2" ref={locationDropdownRef}>
@@ -3267,10 +3220,7 @@ const AddAssignmentPage = () => {
                       if (assignmentMode === "single" && !singleUser) return;
                       setIsLocationDropdownOpen(!isLocationDropdownOpen);
                     }}
-                    className={`relative cursor-pointer group ${assignmentMode === "single" && !singleUser
-                      ? "opacity-50 cursor-not-allowed"
-                      : ""
-                      }`}
+                    className={`relative cursor-pointer group ${assignmentMode === "single" && !singleUser ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <input
                       type="text"
@@ -3278,8 +3228,7 @@ const AddAssignmentPage = () => {
                       disabled={assignmentMode === "single" && !singleUser}
                       value={
                         selectedLocations.length > 0
-                          ? `${selectedLocations.length} location${selectedLocations.length > 1 ? "s" : ""
-                          } selected`
+                          ? `${selectedLocations.length} location${selectedLocations.length > 1 ? "s" : ""} selected`
                           : "Click to select locations..."
                       }
                       placeholder="Click to select locations..."
@@ -3294,8 +3243,7 @@ const AddAssignmentPage = () => {
                     <ChevronDown
                       size={18}
                       strokeWidth={2.5}
-                      className={`absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 transition-transform duration-300 ${isLocationDropdownOpen ? "rotate-180" : ""
-                        }`}
+                      className={`absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 transition-transform duration-300 ${isLocationDropdownOpen ? "rotate-180" : ""}`}
                       style={{ color: "var(--assignment-subtitle)" }}
                     />
                   </div>
@@ -3315,7 +3263,9 @@ const AddAssignmentPage = () => {
                         {/* SEARCH */}
                         <div
                           className="p-2.5 flex-shrink-0"
-                          style={{ borderBottom: "1px solid var(--assignment-divider)" }}
+                          style={{
+                            borderBottom: "1px solid var(--assignment-divider)",
+                          }}
                         >
                           <div className="relative">
                             <Search
@@ -3326,12 +3276,15 @@ const AddAssignmentPage = () => {
                             <input
                               type="text"
                               value={locationSearchTerm}
-                              onChange={(e) => setLocationSearchTerm(e.target.value)}
+                              onChange={(e) =>
+                                setLocationSearchTerm(e.target.value)
+                              }
                               placeholder="Search locations..."
                               className="w-full pl-10 pr-4 py-2 text-sm rounded-lg outline-none"
                               style={{
                                 background: "var(--assignment-input-bg)",
-                                border: "1px solid var(--assignment-input-border)",
+                                border:
+                                  "1px solid var(--assignment-input-border)",
                                 color: "var(--assignment-input-text)",
                               }}
                               onClick={(e) => e.stopPropagation()}
@@ -3343,7 +3296,10 @@ const AddAssignmentPage = () => {
                         {assignmentMode === "multi" && (
                           <div
                             className="p-1.5 flex-shrink-0"
-                            style={{ borderBottom: "1px solid var(--assignment-divider)" }}
+                            style={{
+                              borderBottom:
+                                "1px solid var(--assignment-divider)",
+                            }}
                           >
                             <label className="flex items-center gap-2 px-2 py-1.5 cursor-pointer rounded-lg">
                               <input
@@ -3354,7 +3310,9 @@ const AddAssignmentPage = () => {
                               />
                               <span
                                 className="text-sm font-medium"
-                                style={{ color: "var(--assignment-input-text)" }}
+                                style={{
+                                  color: "var(--assignment-input-text)",
+                                }}
                               >
                                 Select All ({filteredLocations.length})
                               </span>
@@ -3367,7 +3325,15 @@ const AddAssignmentPage = () => {
                           className="overflow-y-auto flex-1"
                           style={{ minHeight: "250px", maxHeight: "420px" }}
                         >
-                          {filteredLocations.length === 0 ? (
+                          {isDataLoading ? (
+                            <div
+                              className="p-4 flex items-center justify-center gap-2 text-sm"
+                              style={{ color: "var(--assignment-subtitle)" }}
+                            >
+                              <Loader className="w-4 h-4 animate-spin" />{" "}
+                              Loading locations...
+                            </div>
+                          ) : filteredLocations.length === 0 ? (
                             <div
                               className="p-4 text-center text-sm"
                               style={{ color: "var(--assignment-subtitle)" }}
@@ -3394,7 +3360,11 @@ const AddAssignmentPage = () => {
                                   }}
                                 >
                                   {assignmentMode === "multi" ? (
-                                    <input type="checkbox" checked={isSelected} readOnly />
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      readOnly
+                                    />
                                   ) : (
                                     <div
                                       className="w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0"
@@ -3421,12 +3391,15 @@ const AddAssignmentPage = () => {
 
                                   <MapPin
                                     className="w-4 h-4 flex-shrink-0"
-                                    style={{ color: "var(--assignment-subtitle)" }}
+                                    style={{
+                                      color: "var(--assignment-subtitle)",
+                                    }}
                                   />
-
                                   <span
                                     className="text-sm font-medium flex-1"
-                                    style={{ color: "var(--assignment-input-text)" }}
+                                    style={{
+                                      color: "var(--assignment-input-text)",
+                                    }}
                                   >
                                     {location.name}
                                   </span>
@@ -3462,19 +3435,19 @@ const AddAssignmentPage = () => {
                             className="w-3.5 h-3.5 flex-shrink-0"
                             style={{ color: "var(--assignment-accent-text)" }}
                           />
-
                           <span
                             className="text-xs font-semibold"
                             style={{ color: "var(--assignment-chip-text)" }}
                           >
                             {location.name}
                           </span>
-
                           <button
                             type="button"
                             onClick={() => handleRemoveLocation(location.id)}
                             className="p-0.5 rounded-full transition-colors"
-                            style={{ color: "var(--assignment-chip-remove-hover)" }}
+                            style={{
+                              color: "var(--assignment-chip-remove-hover)",
+                            }}
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -3485,7 +3458,6 @@ const AddAssignmentPage = () => {
                 )}
               </div>
 
-
               {/* Action Button */}
               <div
                 className="pt-4 sm:pt-6"
@@ -3493,13 +3465,14 @@ const AddAssignmentPage = () => {
               >
                 <button
                   type="submit"
-                  disabled={isLoading || isValidating || !canAddAssignment}
+                  disabled={
+                    createAssignmentMutation.isPending ||
+                    isValidating ||
+                    !canAddAssignment
+                  }
                   className="w-full py-3 sm:py-4 px-4 sm:px-6 text-sm sm:text-base font-bold rounded-2xl transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 sm:gap-3 disabled:cursor-not-allowed disabled:opacity-50"
                   style={{
-                    background:
-                      assignmentMode === "multi"
-                        ? "var(--assignment-primary-bg)"
-                        : "var(--assignment-primary-bg)",
+                    background: "var(--assignment-primary-bg)",
                     color: "var(--assignment-primary-text)",
                     boxShadow: "var(--assignment-primary-shadow)",
                   }}
@@ -3519,7 +3492,7 @@ const AddAssignmentPage = () => {
                         Validating...
                       </span>
                     </>
-                  ) : isLoading ? (
+                  ) : createAssignmentMutation.isPending ? (
                     <>
                       <Loader className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
                       <span style={{ color: "var(--assignment-primary-text)" }}>
@@ -3531,18 +3504,19 @@ const AddAssignmentPage = () => {
                       <Check size={20} strokeWidth={3} />
                       <span>
                         {assignmentMode === "multi"
-                          ? `Create ${selectedUsers.length > 0 && selectedLocations.length > 0
-                            ? selectedUsers.length * selectedLocations.length
-                            : 0
-                          } Assignments`
-                          : `Assign ${selectedLocations.length} Location${selectedLocations.length !== 1 ? "s" : ""
-                          }`}
+                          ? `Create ${
+                              selectedUsers.length > 0 &&
+                              selectedLocations.length > 0
+                                ? selectedUsers.length *
+                                  selectedLocations.length
+                                : 0
+                            } Assignments`
+                          : `Assign ${selectedLocations.length} Location${selectedLocations.length !== 1 ? "s" : ""}`}
                       </span>
                     </>
                   )}
                 </button>
               </div>
-
             </form>
           </div>
         </div>

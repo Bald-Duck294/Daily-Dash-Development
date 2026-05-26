@@ -1,5 +1,3 @@
-
-
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -7,11 +5,13 @@ import toast, { Toaster } from "react-hot-toast";
 import { ArrowLeft } from "lucide-react";
 
 import UserForm from "../components/UserForm";
-import { UsersApi } from "@/features/users/users.api";
 import { useCompanyId } from "@/providers/CompanyProvider";
 import { usePermissions } from "@/shared/hooks/usePermission";
 import { useRequirePermission } from "@/shared/hooks/useRequirePermission";
 import { MODULES } from "@/shared/constants/permissions";
+
+// Import the TanStack Query hook
+import { useCreateUser } from "@/features/users/users.queries"; // Adjust import path as needed
 
 export default function AddUserPage() {
   const router = useRouter();
@@ -22,15 +22,21 @@ export default function AddUserPage() {
   const { canAdd } = usePermissions();
   const canAddUser = canAdd(MODULES.USERS);
 
+  // Initialize the mutation
+  const createUserMutation = useCreateUser();
+
   const handleAddUser = async (formData) => {
     const toastId = toast.loading("Creating user...");
-    const response = await UsersApi.createUser(formData, companyId);
+    
+    try {
+      // Execute the mutation using mutateAsync so we can await its completion
+      await createUserMutation.mutateAsync({ data: formData, companyId });
 
-    if (response.success) {
       toast.success("User created successfully!", { id: toastId });
       router.push(`/users?companyId=${companyId}`);
-    } else {
-      toast.error(response.error || "Failed to create user.", { id: toastId });
+    } catch (error) {
+      // The custom hook throws the error, so we catch it here to update the toast
+      toast.error(error.message || "Failed to create user.", { id: toastId });
     }
   };
 
@@ -41,7 +47,6 @@ export default function AddUserPage() {
         className="p-4 sm:p-6 md:p-8 min-h-screen"
         style={{ background: "var(--user-add-bg)" }}
       >
-
         <div className="max-w-3xl mx-auto">
           <button
             onClick={() => router.back()}
@@ -56,8 +61,6 @@ export default function AddUserPage() {
           >
             <ArrowLeft size={20} />
           </button>
-
-
 
           {/* Card with mint green header */}
           <div
@@ -111,10 +114,13 @@ export default function AddUserPage() {
 
             {/* Form */}
             <div className="p-6 sm:p-8">
-              <UserForm onSubmit={handleAddUser} canSubmit={canAddUser} />
+              {/* Optional: pass mutation pending state to disable form while submitting */}
+              <UserForm 
+                onSubmit={handleAddUser} 
+                canSubmit={canAddUser && !createUserMutation.isPending} 
+              />
             </div>
           </div>
-
         </div>
       </div>
     </>

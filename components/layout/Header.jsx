@@ -238,17 +238,19 @@
 import React, { useState, useEffect } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useRouter, useSearchParams, useParams } from "next/navigation";
-import { LogOut, Building } from "lucide-react";
+import { LogOut, Building, Sun, Moon } from "lucide-react";
 import { logout } from "@/features/auth/auth.slice.js";
-import { CompanyApi } from "@/features/companies/api/companies.api.js";
-import { Sun, Moon } from "lucide-react";
 import { resetNotifications } from "@/features/notification/notification.slice.js";
 import { deleteFCMToken } from "@/shared/firebase/fcm.js";
 import { useDeleteFCMTokenMutation } from "@/features/notification/notification.api.js";
 import useNotifications from "@/shared/hooks/useNotification.js";
-// import NotificationBell from "../notification/notificationBell.jsx";
 import NotificationBell from "../notification/NotificationBell";
 import { useCompanyId } from "@/providers/CompanyProvider.jsx";
+import { toast } from "sonner"; // Assuming you use sonner or similar for toast
+
+// ✅ Import the new TanStack Query hook (Adjust the path to where you saved it)
+import { useCompany } from "@/features/companies/queries/companies.queries.js"; 
+
 const Header = ({ pageTitle }) => {
   const dispatch = useDispatch();
   const router = useRouter();
@@ -258,19 +260,14 @@ const Header = ({ pageTitle }) => {
 
   const { user } = useSelector((state) => state.auth);
 
-  // ✅ Initialize notifications (FCM listener)
+  // Initialize notifications (FCM listener)
   useNotifications();
-
-  const [company, setCompany] = useState(null);
-  const [loadingCompany, setLoadingCompany] = useState(false);
 
   const [theme, setTheme] = useState("dark");
 
   // Sync theme on load
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme") || "dark";
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    console.log(savedTheme, "saved theme");
     setTheme(savedTheme);
     document.documentElement.setAttribute("data-theme", savedTheme);
   }, []);
@@ -282,55 +279,10 @@ const Header = ({ pageTitle }) => {
     document.documentElement.setAttribute("data-theme", nextTheme);
   };
 
-  // Get company_id from BOTH sources (params OR searchParams)
-  // const getCompanyId = () => {
-  //   const queryCompanyId = searchParams.get('companyId');
-
-  //   if (params && queryCompanyId) {
-  //     return queryCompanyId;
-  //   }
-
-  //   if (params.id) {
-  //     return params.id;
-  //   }
-
-  //   if (queryCompanyId) {
-  //     return queryCompanyId;
-  //   }
-
-  //   return null;
-  // };
-
   const { companyId } = useCompanyId();
-  // console.log("Company ID in Header:", companyId);
-  // Fetch company information when companyId changes
-  useEffect(() => {
-    if (!companyId || companyId === "null" || companyId === null) {
-      setCompany(null);
-      return;
-    }
 
-    const fetchCompany = async () => {
-      try {
-        setLoadingCompany(true);
-        const response = await CompanyApi.getCompanyById(companyId);
-
-        if (response.success) {
-          setCompany(response.data);
-        } else {
-          console.error("❌ Failed to fetch company:", response.error);
-          setCompany(null);
-        }
-      } catch (error) {
-        console.error("❌ Error fetching company:", error);
-        setCompany(null);
-      } finally {
-        setLoadingCompany(false);
-      }
-    };
-
-    fetchCompany();
-  }, [companyId]);
+  // ✅ Replace useEffect and useState with TanStack Query hook
+  const { data: company, isLoading: loadingCompany } = useCompany(companyId);
 
   const handleLogout = async () => {
     try {
@@ -339,7 +291,6 @@ const Header = ({ pageTitle }) => {
       if (user?.id) {
         try {
           await deleteFcmTokenFromBackend({ userId: user?.id }).unwrap();
-          // console.log('deleted token form backend')
         } catch (error) {
           console.log(error, "error");
         }
@@ -398,7 +349,7 @@ const Header = ({ pageTitle }) => {
 
   const userRole = getRoleText();
 
-  // ✅ Smart truncation: Show first and last characters for very long names
+  // Smart truncation: Show first and last characters for very long names
   const truncateCompanyName = (name, maxLength = 30) => {
     if (!name || name.length <= maxLength) return name;
 
@@ -410,9 +361,10 @@ const Header = ({ pageTitle }) => {
     return `${firstPart}...${lastPart}`;
   };
 
-  // ✅ Function to get header title - EITHER company name OR dashboard
+  // Function to get header title - EITHER company name OR dashboard
   const getHeaderTitle = () => {
-    if (companyId) {
+    // Only show loading/company if we have a valid ID
+    if (companyId && companyId !== "null") {
       if (loadingCompany) {
         return (
           <>
@@ -425,7 +377,7 @@ const Header = ({ pageTitle }) => {
       if (company) {
         return (
           <>
-            <Building className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 text-blue-600 ml-[15px]" />
+            <Building className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 text-cyan-600 ml-[15px]" />
             <span className="truncate block min-w-0" title={company.name}>
               {company.name}
             </span>
@@ -479,7 +431,7 @@ const Header = ({ pageTitle }) => {
           <button
             onClick={toggleTheme}
             className="flex items-center justify-center h-9 w-9 rounded-md
-          hover:bg-black/5 transition"
+          hover:bg-black/5 dark:hover:bg-white/10 transition"
             aria-label="Toggle theme"
           >
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
@@ -489,7 +441,7 @@ const Header = ({ pageTitle }) => {
         <button
           onClick={handleLogout}
           className="px-2 py-1.5 sm:px-3 sm:py-2 md:px-4 md:py-2 text-xs sm:text-sm font-medium text-white bg-slate-800 
-          rounded-lg hover:bg-slate-900 
+          rounded-lg hover:bg-slate-900 dark:bg-cyan-600 dark:hover:bg-cyan-700
           transition-colors flex items-center justify-center gap-1 sm:gap-2 whitespace-nowrap"
         >
           <LogOut className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />

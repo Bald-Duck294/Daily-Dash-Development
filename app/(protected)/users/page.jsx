@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable react-hooks/immutability */
 // "use client";
 
@@ -1632,31 +1633,23 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSelector } from "react-redux";
 import toast, { Toaster } from "react-hot-toast";
 import {
-  Plus,
-  Edit,
-  Trash2,
-  Users,
-  Search,
-  Eye,
-  Shield,
-  UserCog,
-  HardHat,
-  MapPin,
-  Building2,
-  LayoutGrid,
-  List,
+  Plus, Edit, Trash2, Users, Search, Eye, Shield,
+  UserCog, HardHat, MapPin, Building2, LayoutGrid, List,
 } from "lucide-react";
-import { UsersApi } from "@/features/users/users.api";
 import { useRouter } from "next/navigation";
 
+// Providers & Hooks
 import { useCompanyId } from "@/providers/CompanyProvider";
 import { usePermissions } from "@/shared/hooks/usePermission";
 import { useRequirePermission } from "@/shared/hooks/useRequirePermission";
 import { MODULES } from "@/shared/constants/permissions";
+
+// TanStack Query Hooks
+import { useGetAllUsers, useDeleteUser } from "@/features/users/users.queries";
 
 // 1. Updated Hierarchy with Color Classes
 const ROLE_HIERARCHY = {
@@ -1665,9 +1658,7 @@ const ROLE_HIERARCHY = {
     level: 2,
     icon: Shield,
     color: "blue",
-    // Light mode active state
-    activeClass:
-      "bg-gradient-to-br from-blue-500 to-blue-600 border-blue-600 text-white shadow-blue-200",
+    activeClass: "bg-gradient-to-br from-blue-500 to-blue-600 border-blue-600 text-white shadow-blue-200",
     iconColor: "text-blue-100",
   },
   3: {
@@ -1675,8 +1666,7 @@ const ROLE_HIERARCHY = {
     level: 4,
     icon: UserCog,
     color: "teal",
-    activeClass:
-      "bg-gradient-to-br from-teal-500 to-teal-600 border-teal-600 text-white shadow-teal-200",
+    activeClass: "bg-gradient-to-br from-teal-500 to-teal-600 border-teal-600 text-white shadow-teal-200",
     iconColor: "text-teal-100",
   },
   5: {
@@ -1684,8 +1674,7 @@ const ROLE_HIERARCHY = {
     level: 5,
     icon: HardHat,
     color: "orange",
-    activeClass:
-      "bg-gradient-to-br from-orange-500 to-orange-600 border-orange-600 text-white shadow-orange-200",
+    activeClass: "bg-gradient-to-br from-orange-500 to-orange-600 border-orange-600 text-white shadow-orange-200",
     iconColor: "text-orange-100",
   },
   6: {
@@ -1693,17 +1682,15 @@ const ROLE_HIERARCHY = {
     level: 3,
     icon: MapPin,
     color: "purple",
-    activeClass:
-      "bg-gradient-to-br from-purple-500 to-purple-600 border-purple-600 text-white shadow-purple-200",
+    activeClass: "bg-gradient-to-br from-purple-500 to-purple-600 border-purple-600 text-white shadow-purple-200",
     iconColor: "text-purple-100",
   },
   7: {
     name: "Facility Supv",
     level: 4,
     icon: Users,
-    color: "cyan", // Changed to cyan for differentiation
-    activeClass:
-      "bg-gradient-to-br from-cyan-500 to-cyan-600 border-cyan-600 text-white shadow-cyan-200",
+    color: "cyan",
+    activeClass: "bg-gradient-to-br from-cyan-500 to-cyan-600 border-cyan-600 text-white shadow-cyan-200",
     iconColor: "text-cyan-100",
   },
   8: {
@@ -1711,8 +1698,7 @@ const ROLE_HIERARCHY = {
     level: 3,
     icon: Building2,
     color: "indigo",
-    activeClass:
-      "bg-gradient-to-br from-indigo-500 to-indigo-600 border-indigo-600 text-white shadow-indigo-200",
+    activeClass: "bg-gradient-to-br from-indigo-500 to-indigo-600 border-indigo-600 text-white shadow-indigo-200",
     iconColor: "text-indigo-100",
   },
 };
@@ -1748,13 +1734,15 @@ export default function UsersPage() {
   const canEditUser = canUpdate(MODULES.USERS);
   const canDeleteUser = canDelete(MODULES.USERS);
 
-  const [users, setUsers] = useState([]);
-  const [filteredUsers, setFilteredUsers] = useState([]);
+  const { companyId } = useCompanyId();
+  const router = useRouter();
+  const currentUser = useSelector((state) => state.auth.user);
+  const currentUserRoleId = parseInt(currentUser?.role_id || 4);
+
+  // --- LOCAL STATE (UI & Filters) ---
   const [searchTerm, setSearchTerm] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedRole, setSelectedRole] = useState("all");
   const [viewMode, setViewMode] = useState("table");
-
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -1764,44 +1752,31 @@ export default function UsersPage() {
       }
     }
   }, []);
-  
-  const currentUser = useSelector((state) => state.auth.user);
-  const { companyId } = useCompanyId();
-  const router = useRouter();
 
-  const currentUserRoleId = parseInt(currentUser?.role_id || 4);
-
-  // --- Logic Helpers ---
-
-  const roleStats = useCallback(() => {
-    const stats = {};
-    Object.keys(ROLE_HIERARCHY).forEach((roleId) => {
-      stats[roleId] = users.filter(
-        (u) => parseInt(u.role_id || u.role?.id) === parseInt(roleId),
-      ).length;
-    });
-    return stats;
-  }, [users]);
-
-  const filterUsersByRole = useCallback(
-    (allUsers) => {
-      if (!currentUser || !currentUser.role_id) return allUsers;
-
-      return allUsers.filter((user) => {
-        const userRoleId = parseInt(user.role_id || user.role?.id, 10);
-        if (userRoleId === 1 || userRoleId === 4) return false;
-        if (!ROLE_HIERARCHY[userRoleId]) return false;
-        if (currentUserRoleId === 1) return true;
-        if (currentUserRoleId === 2) return true;
-
-        const userRoleLevel = ROLE_HIERARCHY[userRoleId]?.level || 999;
-        const currentUserRoleLevel =
-          ROLE_HIERARCHY[currentUserRoleId]?.level || 999;
-        return userRoleLevel >= currentUserRoleLevel;
-      });
-    },
-    [currentUser, currentUserRoleId],
+  // --- TANSTACK QUERIES & MUTATIONS ---
+  const { data: rawUsersData = [], isLoading } = useGetAllUsers(
+    { companyId },
+    { enabled: !!companyId }
   );
+
+  const deleteUserMutation = useDeleteUser();
+
+  // --- DERIVED STATE (Replaces useEffect filtering) ---
+  const filterUsersByRole = useCallback((allUsers) => {
+    if (!currentUser || !currentUser.role_id) return allUsers;
+
+    return allUsers.filter((user) => {
+      const userRoleId = parseInt(user.role_id || user.role?.id, 10);
+      if (userRoleId === 1 || userRoleId === 4) return false;
+      if (!ROLE_HIERARCHY[userRoleId]) return false;
+      if (currentUserRoleId === 1) return true;
+      if (currentUserRoleId === 2) return true;
+
+      const userRoleLevel = ROLE_HIERARCHY[userRoleId]?.level || 999;
+      const currentUserRoleLevel = ROLE_HIERARCHY[currentUserRoleId]?.level || 999;
+      return userRoleLevel > currentUserRoleLevel;
+    });
+  }, [currentUser, currentUserRoleId]);
 
   const filterUsersBySearch = useCallback((allUsers, term) => {
     if (!term) return allUsers;
@@ -1813,63 +1788,44 @@ export default function UsersPage() {
     );
   }, []);
 
-  const fetchUsers = useCallback(async () => {
-    if (!companyId) {
-      setIsLoading(false);
-      return;
+  // Base list of users permitted for the current user to see
+  const baseUsers = useMemo(() => {
+    if (!rawUsersData) return [];
+    return filterUsersByRole(rawUsersData);
+  }, [rawUsersData, filterUsersByRole]);
+
+  // Final list of users after search and role filtering
+  const filteredUsers = useMemo(() => {
+    let filtered = [...baseUsers];
+
+    if (selectedRole !== "all") {
+      filtered = filtered.filter(
+        (u) => parseInt(u.role_id || u.role?.id) === parseInt(selectedRole)
+      );
     }
-    setIsLoading(true);
-    try {
-      const response = await UsersApi.getAllUsers(companyId);
-      if (response.success) {
-        const roleFilteredUsers = filterUsersByRole(response.data);
-        setUsers(roleFilteredUsers);
-        applyFilters(roleFilteredUsers, searchTerm, selectedRole);
-      } else {
-        toast.error(response.error || "Failed to fetch users.");
-      }
-    } catch (error) {
-      console.error("Error fetching users:", error);
-      toast.error("Failed to fetch users.");
-    }
-    setIsLoading(false);
-  }, [companyId, filterUsersByRole, searchTerm, selectedRole]);
 
-  const applyFilters = useCallback(
-    (userList, search, role) => {
-      let filtered = [...userList];
+    return filterUsersBySearch(filtered, searchTerm);
+  }, [baseUsers, selectedRole, searchTerm, filterUsersBySearch]);
 
-      if (role !== "all") {
-        filtered = filtered.filter(
-          (u) => parseInt(u.role_id || u.role?.id) === parseInt(role),
-        );
-      }
-
-      filtered = filterUsersBySearch(filtered, search);
-      setFilteredUsers(filtered);
-    },
-    [filterUsersBySearch],
-  );
-
-  useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
-
-  useEffect(() => {
-    applyFilters(users, searchTerm, selectedRole);
-  }, [searchTerm, selectedRole, users, applyFilters]);
+  // Role Statistics based on the base users
+  const stats = useMemo(() => {
+    const s = {};
+    Object.keys(ROLE_HIERARCHY).forEach((roleId) => {
+      s[roleId] = baseUsers.filter(
+        (u) => parseInt(u.role_id || u.role?.id) === parseInt(roleId)
+      ).length;
+    });
+    return s;
+  }, [baseUsers]);
 
   // --- UI Helpers ---
 
   const canManageUser = (targetUser) => {
     if (currentUserRoleId === 1) return true;
-    const targetUserRoleId = parseInt(
-      targetUser.role_id || targetUser.role?.id || 4,
-    );
+    const targetUserRoleId = parseInt(targetUser.role_id || targetUser.role?.id || 4);
     const targetUserRoleLevel = ROLE_HIERARCHY[targetUserRoleId]?.level || 999;
-    const currentUserRoleLevel =
-      ROLE_HIERARCHY[currentUserRoleId]?.level || 999;
-    return targetUserRoleLevel >= currentUserRoleLevel;
+    const currentUserRoleLevel = ROLE_HIERARCHY[currentUserRoleId]?.level || 999;
+    return targetUserRoleLevel > currentUserRoleLevel;
   };
 
   const getRoleDisplayName = (user) => {
@@ -1882,12 +1838,9 @@ export default function UsersPage() {
     const colorMap = {
       blue: "text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700",
       teal: "text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-900/30 border-teal-200 dark:border-teal-700",
-      orange:
-        "text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-700",
-      purple:
-        "text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700",
-      indigo:
-        "text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-700",
+      orange: "text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-700",
+      purple: "text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700",
+      indigo: "text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-700",
       cyan: "text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-900/30 border-cyan-200 dark:border-cyan-700",
     };
     const color = ROLE_HIERARCHY[roleId]?.color || "gray";
@@ -1895,6 +1848,16 @@ export default function UsersPage() {
       colorMap[color] ||
       "text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-600"
     );
+  };
+
+  const performDelete = async (id) => {
+    const toastId = toast.loading("Deleting user...");
+    try {
+      await deleteUserMutation.mutateAsync(id);
+      toast.success("User deleted successfully!", { id: toastId });
+    } catch (error) {
+      toast.error(error.message || "Failed to delete user.", { id: toastId });
+    }
   };
 
   const handleDelete = (user) => {
@@ -1931,24 +1894,11 @@ export default function UsersPage() {
     );
   };
 
-  const performDelete = async (id) => {
-    const toastId = toast.loading("Deleting user...");
-    const response = await UsersApi.deleteUser(id);
-    if (response.success) {
-      toast.success("User deleted successfully!", { id: toastId });
-      fetchUsers();
-    } else {
-      toast.error(response.error || "Failed to delete user.", { id: toastId });
-    }
-  };
-
-  const stats = roleStats();
-
   // --- Render Components ---
 
   const UserCard = ({ user }) => (
     <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 p-5 hover:shadow-md transition-all duration-300 group cursor-pointer relative overflow-hidden">
-      {/* Top Line Hover Effect (restored) */}
+      {/* Top Line Hover Effect */}
       <div className="absolute top-0 left-0 w-full h-1 bg-orange-500 scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left" />
 
       <div className="flex justify-between items-start mb-4">
@@ -2067,7 +2017,6 @@ export default function UsersPage() {
                   Assign
                 </a>
               </div>
-
             </div>
           </div>
 
@@ -2089,7 +2038,7 @@ export default function UsersPage() {
                   <div className="h-2 w-2 rounded-full bg-orange-400" />
                 )}
               </div>
-              <p className="text-2xl font-black">{users.length}</p>
+              <p className="text-2xl font-black">{baseUsers.length}</p>
               <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">
                 Total Users
               </p>
@@ -2101,7 +2050,6 @@ export default function UsersPage() {
               const Icon = roleData.icon;
               const isSelected = selectedRole === roleId;
 
-              // Apply specific role color in Light Mode, default to dark in Dark Mode
               const activeClasses = isSelected
                 ? `${roleData.activeClass} dark:bg-slate-700 dark:border-slate-600 dark:text-white dark:from-transparent dark:to-transparent`
                 : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-sm";
@@ -2323,7 +2271,7 @@ export default function UsersPage() {
               </span>{" "}
               of{" "}
               <span className="text-slate-900 dark:text-white font-bold">
-                {users.length}
+                {baseUsers.length}
               </span>{" "}
               staff members
             </div>

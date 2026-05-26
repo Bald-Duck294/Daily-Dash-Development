@@ -5,7 +5,6 @@ import { store } from "@/store/index.js";
 import { logout } from "@/features/auth/auth.slice.js";
 import toast from "react-hot-toast";
 
-
 const storeState = store.getState();
 
 const axiosInstance = axios.create({
@@ -36,6 +35,12 @@ let isLoggingOut = false;
 axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
+    // ✅ FIX: Ignore 401 errors from the login route.
+    // Let AuthApi handle them so it can show "Invalid password".
+    if (error.config?.url?.includes("/login")) {
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !isLoggingOut) {
       isLoggingOut = true;
 

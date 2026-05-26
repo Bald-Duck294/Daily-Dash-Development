@@ -1420,7 +1420,10 @@ const Sidebar = () => {
       return getAdminMenu(companyId);
     }
     if (hasCompanyContext && user?.role?.permissions) {
-      const menuTemplate = getFullCompanyMenuTemplate(companyId);
+      let menuTemplate = getFullCompanyMenuTemplate(companyId);
+      if (user.role_id === 6) {
+        menuTemplate = menuTemplate.filter(item => item.key !== "locationTypes");
+      }
       const filteredMenu = filterMenuByPermissions(
         menuTemplate,
         user.role.permissions,

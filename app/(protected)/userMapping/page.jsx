@@ -1,26 +1,14 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import toast, { Toaster } from "react-hot-toast";
-import { AssignmentsApi } from "@/features/assignments/assignments.api";
-import Loader from "@/components/ui/Loader";
 import {
-  Search,
-  UserCheck,
-  MapPin,
-  Trash2,
-  Plus,
-  Shield, // For Role Filter
-  Activity, // For Status Filter
-  Calendar,
-  Settings,
-  ChevronDown,
-  User,
-  Users,
-  CheckCircle,
-  AlertCircle,
+  Search, UserCheck, MapPin, Trash2, Plus, Shield,
+  Activity, Calendar, Settings, ChevronDown, User,
+  Users, CheckCircle, AlertCircle,
 } from "lucide-react";
+import Loader from "@/components/ui/Loader";
 
 // Providers & Hooks
 import { useCompanyId } from "@/providers/CompanyProvider";
@@ -28,106 +16,37 @@ import { usePermissions } from "@/shared/hooks/usePermission";
 import { useRequirePermission } from "@/shared/hooks/useRequirePermission";
 import { MODULES } from "@/shared/constants/permissions";
 
+// TanStack Query Hooks
+import { 
+  useGetAllAssignments, 
+  useDeleteAssignment, 
+  useUpdateAssignment 
+} from "@/features/assignments/assignments.queries";
+
 export default function AssignmentListPage() {
   useRequirePermission(MODULES.ASSIGNMENTS);
-
   const { canAdd, canUpdate, canDelete } = usePermissions();
   const canAddAssignment = canAdd(MODULES.ASSIGNMENTS);
   const canEditAssignment = canUpdate(MODULES.ASSIGNMENTS);
   const canDeleteAssignment = canDelete(MODULES.ASSIGNMENTS);
 
-  const [assignments, setAssignments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [hasInitialized, setHasInitialized] = useState(false);
-  const [deleting, setDeleting] = useState(null);
-
-  // Dropdown states for Table Headers
-  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
-  const [showRoleDropdown, setShowRoleDropdown] = useState(false);
-  const statusDropdownRef = useRef(null);
-  const roleDropdownRef = useRef(null);
-
-  // Search and filter states
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");
-
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const [showRoleDropdown, setShowRoleDropdown] = useState(false);
+  
+  // FIXED: Added state to track which item is being deleted
+  const [deletingId, setDeletingId] = useState(null); 
+  
+  const statusDropdownRef = useRef(null);
+  const roleDropdownRef = useRef(null);
   const { companyId } = useCompanyId();
 
-  // --- API CALLS ---
-  const fetchAssignments = async () => {
-    if (!companyId || companyId === "null") {
-      setLoading(false);
-      setHasInitialized(true);
-      return;
-    }
-
-    if (hasInitialized) setLoading(true);
-
-    try {
-      const res = await AssignmentsApi.getAllAssignments(companyId);
-      if (res.success) {
-        setAssignments(res.data?.data || []);
-      } else {
-        toast.error(res.error);
-        setAssignments([]);
-      }
-    } catch (error) {
-      console.error("Fetch mapping error:", error);
-      toast.error("Failed to fetch mappings");
-      setAssignments([]);
-    } finally {
-      setLoading(false);
-      setHasInitialized(true);
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (!canDeleteAssignment) return toast.error("Permission denied");
-    if (!confirm("Are you sure you want to delete this assignment?")) return;
-
-    setDeleting(id);
-    try {
-      const res = await AssignmentsApi.deleteAssignment(id);
-      if (res.success) {
-        toast.success("Assignment deleted!");
-        fetchAssignments();
-      } else {
-        toast.error(res.error);
-      }
-    } catch (error) {
-      toast.error("Failed to delete assignment");
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  const handleStatusToggle = async (assignment) => {
-    if (!canEditAssignment) return toast.error("Permission denied");
-
-    const newStatus =
-      assignment.status === "assigned" ? "unassigned" : "assigned";
-    if (!confirm(`Change status to "${newStatus}"?`)) return;
-
-    try {
-      const res = await AssignmentsApi.updateAssignment(assignment.id, {
-        status: newStatus,
-        cleaner_user_id: assignment.cleaner_user_id,
-        company_id: assignment.company_id || companyId,
-        location_id: assignment.location_id,
-        role_id: assignment.role_id,
-      });
-
-      if (res.success) {
-        toast.success(`Status updated to ${newStatus}`);
-        fetchAssignments();
-      } else {
-        toast.error(res.error);
-      }
-    } catch (error) {
-      toast.error("Failed to update status");
-    }
-  };
+  // --- QUERIES & MUTATIONS ---
+  const { data: assignments = [], isLoading } = useGetAllAssignments(companyId);
+  const deleteMutation = useDeleteAssignment();
+  const updateMutation = useUpdateAssignment();
 
   // --- FILTERS & MEMOS ---
   const filteredAssignments = useMemo(() => {
@@ -135,80 +54,30 @@ export default function AssignmentListPage() {
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter((assignment) => {
-        const locationName = assignment.locations?.name?.toLowerCase() || "";
-        const userName = assignment.user?.name?.toLowerCase() || "";
-        return locationName.includes(query) || userName.includes(query);
+      filtered = filtered.filter((a) => {
+        const loc = a.locations?.name?.toLowerCase() || "";
+        const user = a.user?.name?.toLowerCase() || "";
+        return loc.includes(query) || user.includes(query);
       });
     }
 
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((a) => a.status === statusFilter);
-    }
-
-    if (roleFilter !== "all") {
-      filtered = filtered.filter(
-        (a) => a.role?.name?.toLowerCase() === roleFilter.toLowerCase(),
-      );
-    }
+    if (statusFilter !== "all") filtered = filtered.filter((a) => a.status === statusFilter);
+    if (roleFilter !== "all") filtered = filtered.filter((a) => a.role?.name?.toLowerCase() === roleFilter.toLowerCase());
 
     return filtered;
   }, [assignments, searchQuery, statusFilter, roleFilter]);
 
-  const uniqueRoles = useMemo(() => {
-    return [...new Set(assignments.map((a) => a.role?.name).filter(Boolean))];
-  }, [assignments]);
+  const uniqueRoles = useMemo(() => [...new Set(assignments.map((a) => a.role?.name).filter(Boolean))], [assignments]);
+  
+  const statusCounts = useMemo(() => ({
+    all: assignments.length,
+    assigned: assignments.filter((a) => a.status === "assigned").length,
+    unassigned: assignments.filter((a) => a.status === "unassigned").length,
+  }), [assignments]);
 
-  const statusCounts = useMemo(() => {
-    return {
-      all: assignments.length,
-      assigned: assignments.filter((a) => a.status === "assigned").length,
-      unassigned: assignments.filter((a) => a.status === "unassigned").length,
-    };
-  }, [assignments]);
-
-  // --- EFFECTS ---
-  useEffect(() => {
-    fetchAssignments();
-  }, [companyId]);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (
-        statusDropdownRef.current &&
-        !statusDropdownRef.current.contains(event.target)
-      ) {
-        setShowStatusDropdown(false);
-      }
-      if (
-        roleDropdownRef.current &&
-        !roleDropdownRef.current.contains(event.target)
-      ) {
-        setShowRoleDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // --- RENDER HELPERS ---
-
-  // New Palette for Badges (Matches screenshot)
-  const getRoleStyle = (roleName) => {
-    const role = roleName?.toLowerCase() || "";
-    if (role === "cleaner")
-      return "bg-orange-50 text-orange-600 border border-orange-200";
-    if (role === "supervisor")
-      return "bg-cyan-50 text-cyan-600 border border-cyan-200";
-    return "bg-slate-50 text-slate-600 border border-slate-200";
-  };
-
-  const getStatusStyle = (status) => {
-    if (status === "assigned")
-      return "bg-emerald-50 text-emerald-600 border border-emerald-200";
-    return "bg-amber-50 text-amber-600 border border-amber-200";
-  };
-
+  // --- HANDLERS ---
+  
+  // FIXED: Added missing getInitials helper function
   const getInitials = (name) => {
     if (!name) return "U";
     return name
@@ -219,7 +88,52 @@ export default function AssignmentListPage() {
       .substring(0, 2);
   };
 
-  if (loading || !hasInitialized) {
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(event.target)) {
+        setShowStatusDropdown(false);
+      }
+      if (roleDropdownRef.current && !roleDropdownRef.current.contains(event.target)) {
+        setShowRoleDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleDelete = async (id) => {
+    if (!canDeleteAssignment) return toast.error("Permission denied");
+    if (!confirm("Are you sure you want to delete this assignment?")) return;
+
+    setDeletingId(id); // Set loading state for specific button
+    try {
+      await deleteMutation.mutateAsync(id);
+      toast.success("Assignment deleted!");
+    } catch (error) {
+      toast.error(error.message || "Failed to delete");
+    } finally {
+      setDeletingId(null); // Clear loading state
+    }
+  };
+
+  const handleStatusToggle = async (assignment) => {
+    if (!canEditAssignment) return toast.error("Permission denied");
+
+    const newStatus = assignment.status === "assigned" ? "unassigned" : "assigned";
+    if (!confirm(`Change status to "${newStatus}"?`)) return;
+
+    try {
+      await updateMutation.mutateAsync({
+        id: assignment.id,
+        data: { ...assignment, status: newStatus }
+      });
+      toast.success(`Status updated to ${newStatus}`);
+    } catch (error) {
+      toast.error("Failed to update status");
+    }
+  };
+
+  if (isLoading) {
     return (
       <div
         className="min-h-screen flex items-center justify-center"
@@ -310,7 +224,7 @@ export default function AssignmentListPage() {
         </div>
 
 
-        {/* === REDESIGNED STATS CARDS (No Flags) === */}
+        {/* === REDESIGNED STATS CARDS === */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           {/* Total Staff Card */}
           <div
@@ -503,15 +417,16 @@ export default function AssignmentListPage() {
               <thead>
                 <tr
                   style={{
-                    // background: "var(--assignment-header-bg)",
                     borderBottom: "1px solid var(--assignment-divider)",
                     color: "var(--assignment-subtitle)",
                   }}
                   className="text-left"
                 >
-                  <th className="px-6 py-4 text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-2">
-                    <User className="w-3.5 h-3.5" />
-                    Cleaner
+                  <th className="px-6 py-4 text-[10px] font-extrabold uppercase tracking-wider">
+                    <div className="flex items-center gap-2">
+                      <User className="w-3.5 h-3.5" />
+                      Cleaner
+                    </div>
                   </th>
 
                   <th className="px-6 py-4 text-[10px] font-extrabold uppercase tracking-wider">
@@ -786,15 +701,15 @@ export default function AssignmentListPage() {
                         {canDeleteAssignment && (
                           <button
                             onClick={() => handleDelete(assignment.id)}
-                            disabled={deleting === assignment.id}
-                            className="w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-sm"
+                            disabled={deletingId === assignment.id}
+                            className="w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-sm ml-auto"
                             style={{
                               background: "var(--assignment-warning-bg)",
                               border: "1px solid var(--assignment-warning-border)",
                               color: "var(--assignment-warning-text)",
                             }}
                           >
-                            {deleting === assignment.id ? (
+                            {deletingId === assignment.id ? (
                               <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                             ) : (
                               <Trash2 className="w-3.5 h-3.5" />
@@ -880,6 +795,7 @@ export default function AssignmentListPage() {
                   {canDeleteAssignment && (
                     <button
                       onClick={() => handleDelete(assignment.id)}
+                      disabled={deletingId === assignment.id}
                       className="w-8 h-8 rounded-full flex items-center justify-center transition-all"
                       style={{
                         background: "var(--assignment-warning-bg)",
@@ -887,7 +803,11 @@ export default function AssignmentListPage() {
                         color: "var(--assignment-warning-text)",
                       }}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      {deletingId === assignment.id ? (
+                        <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
                     </button>
                   )}
                 </div>
@@ -942,6 +862,7 @@ export default function AssignmentListPage() {
 
                   <button
                     onClick={() => handleStatusToggle(assignment)}
+                    disabled={!canEditAssignment}
                     className="inline-block px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
                     style={{
                       background:

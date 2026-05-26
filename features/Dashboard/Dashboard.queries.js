@@ -1,0 +1,71 @@
+import { useQuery } from '@tanstack/react-query';
+import { DashboardApi } from '@/features/Dashboard/Dashboard.api'; // Adjust import path as needed
+
+// 1. Get counts
+export const useDashboardCounts = (companyId, date) => {
+  return useQuery({
+    queryKey: ['dashboard', 'counts', companyId, date],
+    queryFn: async () => {
+      const response = await DashboardApi.getCounts(companyId, date);
+      if (!response.success) throw new Error(response.error || 'Failed to fetch counts');
+      return response.data;
+    },
+    enabled: !!companyId, // Prevents query from running if companyId is undefined
+  });
+};
+
+// 2. Get top locations
+export const useDashboardTopLocations = (companyId, limit = 5, date) => {
+  return useQuery({
+    queryKey: ['dashboard', 'topLocations', companyId, limit, date],
+    queryFn: async () => {
+      const response = await DashboardApi.getTopLocations(companyId, limit, date);
+      if (!response.success) throw new Error(response.error || 'Failed to fetch top locations');
+      return response.data;
+    },
+    enabled: !!companyId,
+  });
+};
+
+// 3. Get activities
+export const useDashboardActivities = (companyId, limit = 10, date) => {
+  return useQuery({
+    queryKey: ['dashboard', 'activities', companyId, limit, date],
+    queryFn: async () => {
+      const response = await DashboardApi.getActivities(companyId, limit, date);
+      if (!response.success) throw new Error(response.error || 'Failed to fetch activities');
+      return response.data;
+    },
+    enabled: !!companyId,
+  });
+};
+
+// 4. Get washroom scores summary
+export const useWashroomScoresSummary = (companyId) => {
+  return useQuery({
+    queryKey: ['dashboard', 'washroomScores', companyId],
+    queryFn: async () => {
+      const response = await DashboardApi.getWashroomScoresSummary(companyId);
+      if (!response.success) throw new Error('Failed to fetch washroom scores');
+      return response.data;
+    },
+    enabled: !!companyId,
+  });
+};
+
+// 5. Get cleaner performance
+export const useCleanerPerformance = (companyId) => {
+  return useQuery({
+    queryKey: ['dashboard', 'cleanerPerformance', companyId],
+    queryFn: async () => {
+      const response = await DashboardApi.getCleanerPerformance(companyId);
+      if (!response.success) throw new Error('Failed to fetch cleaner performance');
+      // Returning both data and today_completed_tasks from your unique response structure
+      return { 
+        data: response.data, 
+        today_completed_tasks: response.today_completed_tasks 
+      };
+    },
+    enabled: !!companyId,
+  });
+};
