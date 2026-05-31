@@ -766,7 +766,7 @@ const HighlightsCard = ({ locations, onViewAll }) => {
 
   return (
     <CardShell
-      title="Highest Performing Washrooms"
+      title="Top Rated Washrooms"
       subtitle="Today's Performance"
       icon={<Sparkles size={20} />}
       headerRight={
@@ -1107,7 +1107,7 @@ export default function ClientDashboard() {
 
         {canViewCleanerReviews && (
           <CardShell
-            title="Top Cleaners"
+            title="Weekly Cleaner Performance"
             subtitle="Efficiency Metrics"
             icon={<Users size={20} />}
             onClick={() => setActiveChartModal("performance")}
