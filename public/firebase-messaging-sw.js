@@ -165,8 +165,8 @@ messaging.onBackgroundMessage((payload) => {
   const notificationOptions = {
     body: body,
     data: { ...data }, // << IMPORTANT
-    icon: "https://safaiindex.vercel.app/safai_logo.jpeg",
-    badge: "https://safaiindex.vercel.app/safai_logo.jpeg",
+    icon: "/flo-mascot.webp",
+    badge: "/flo-mascot.webp",
   };
 
   self.registration.showNotification(title, notificationOptions);
