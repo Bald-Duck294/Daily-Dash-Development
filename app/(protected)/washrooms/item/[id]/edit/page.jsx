@@ -683,9 +683,7 @@ const EditLocationPage = () => {
         {/* HEADER */}
         <div className="flex flex-col sm:flex-row items-center justify-start gap-4">
           <button
-            onClick={() =>
-              router.push(`/washrooms?companyId=${finalCompanyId}`)
-            }
+           onClick={() => router.back()}
             className="flex items-center p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-600 dark:text-slate-300 transition-colors"
           >
             <ArrowLeft size={20} strokeWidth={2.5} />

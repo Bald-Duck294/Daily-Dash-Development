@@ -636,7 +636,7 @@ const renderAssignedUsers = (assignedCleaners) => {
      style={{ background: "var(--washroom-surface)" }}>
         <div className="max-w-6xl mx-auto px-4 md:px-6 py-2">
           <button
-            onClick={() => router.push(`/washrooms?companyId=${finalCompanyId}`)}
+            onClick={() => router.back()}
             className="inline-flex items-center text-sm font-medium transition-all group border px-4 py-2 rounded-lg cursor-pointer"
             style={{ 
               color: "var(--washroom-subtitle)",

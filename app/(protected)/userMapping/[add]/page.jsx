@@ -2143,7 +2143,7 @@ import {
   useDropdownZones,
   useDropdownRoles
 } from "@/features/dropdownList/dropdownlist.query";
-import { useGetAllRoles } from "@/features/roles/queries/roles.queries";
+
 import {
   User,
   MapPin,
@@ -2160,6 +2160,49 @@ import {
   Map
 } from "lucide-react";
 
+// --- MOVED OUTSIDE COMPONENT TO PREVENT RE-CREATION ON EVERY RENDER ---
+const ROLE_HIERARCHY = {
+  1: { name: "Superadmin", level: 1 },
+  2: { name: "Admin", level: 2 },
+  6: { name: "Zonal Admin", level: 3 },
+  8: { name: "Facility Admin", level: 3 },
+  3: { name: "Supervisor", level: 4 },
+  7: { name: "Facility Supv", level: 4 },
+  5: { name: "Cleaner", level: 5 },
+};
+
+const buildHierarchicalList = (flatList) => {
+  if (!flatList || !Array.isArray(flatList)) return [];
+
+  const map = {};
+  const roots = [];
+
+  flatList.forEach((item) => {
+    map[item.id] = { ...item, children: [] };
+  });
+
+  flatList.forEach((item) => {
+    if (item.parent_id && map[item.parent_id]) {
+      map[item.parent_id].children.push(map[item.id]);
+    } else {
+      roots.push(map[item.id]);
+    }
+  });
+
+  const flatten = (items, level = 0) => {
+    let result = [];
+    items.forEach((item) => {
+      result.push({ ...item, level });
+      if (item.children.length > 0) {
+        result = result.concat(flatten(item.children, level + 1));
+      }
+    });
+    return result;
+  };
+
+  return flatten(roots);
+};
+
 const AddAssignmentPage = () => {
   useRequirePermission(MODULES.ASSIGNMENTS);
 
@@ -2172,11 +2215,10 @@ const AddAssignmentPage = () => {
   const [selectedLocations, setSelectedLocations] = useState([]);
   const [singleUser, setSingleUser] = useState("");
 
-  // Zone & Supervisor States
   const [selectedZones, setSelectedZones] = useState([]);
   const [zoneSearchTerm, setZoneSearchTerm] = useState("");
   const [isZoneDropdownOpen, setIsZoneDropdownOpen] = useState(false);
-  const [selectAllZoneLocations, setSelectAllZoneLocations] = useState(false); // ✅ NEW STATE FOR SUPERVISOR
+  const [selectAllZoneLocations, setSelectAllZoneLocations] = useState(false);
 
   const [userSearchTerm, setUserSearchTerm] = useState("");
   const [locationSearchTerm, setLocationSearchTerm] = useState("");
@@ -2194,49 +2236,40 @@ const AddAssignmentPage = () => {
   const zoneDropdownRef = useRef(null);
   const router = useRouter();
 
-  const ROLE_HIERARCHY = {
-    1: { name: "Superadmin", level: 1 },
-    2: { name: "Admin", level: 2 },
-    6: { name: "Zonal Admin", level: 3 },
-    8: { name: "Facility Admin", level: 3 },
-    3: { name: "Supervisor", level: 4 },
-    7: { name: "Facility Supv", level: 4 },
-    5: { name: "Cleaner", level: 5 },
-  };
-
   // --- TANSTACK QUERIES ---
   const { data: usersResponse = [], isLoading: isLoadingUsers } = useDropdownUsers(companyId);
-
-  const allUsersRaw = Array.isArray(usersResponse) ? usersResponse : (usersResponse?.data || []);
-  const allUsers = allUsersRaw.map(u => ({
-    ...u,
-    role: { name: u.role_name || u.role?.name }
-  }));
-
   const { data: locationsResponse = [], isLoading: isLoadingLocations } = useDropdownLocations(companyId);
-
-  const allLocations = Array.isArray(locationsResponse)
-    ? locationsResponse
-    : (locationsResponse?.data || []);
-
   const { data: zonesResponse = [], isLoading: isLoadingZones } = useDropdownZones(companyId);
-  const allZones = Array.isArray(zonesResponse)
-    ? zonesResponse
-    : (zonesResponse?.data || []);
-
-
-
-  const {
-    data: singleUserAssignmentsData = [],
-    isLoading: isFetchingAssignments,
-  } = useAssignmentsByCleanerId(singleUser, companyId, false);
-
+  const { data: rolesResponse = [], isLoading: isLoadingRoles } = useDropdownRoles();
+  const { data: singleUserAssignmentsData = [], isLoading: isFetchingAssignments } = useAssignmentsByCleanerId(singleUser, companyId, false);
+  
   const createAssignmentMutation = useCreateAssignment();
 
-  // --- DERIVED STATE & MEMOS ---
+  // --- STRICT MEMOIZATION (PREVENTS INFINITE RENDERING/LAG) ---
+  const currentUserRole = useMemo(() => {
+    const roleId = parseInt(loggedInUser?.role_id);
+    return ROLE_HIERARCHY[roleId] || { level: 99 };
+  }, [loggedInUser?.role_id]);
 
-  const currentUserRoleId = parseInt(loggedInUser?.role_id);
-  const currentUserRole = ROLE_HIERARCHY[currentUserRoleId] || { level: 99 };
+  const allUsers = useMemo(() => {
+    const raw = Array.isArray(usersResponse) ? usersResponse : (usersResponse?.data || []);
+    return raw.map(u => ({
+      ...u,
+      role: { name: u.role_name || u.role?.name }
+    }));
+  }, [usersResponse]);
+
+  const allLocations = useMemo(() => {
+    return Array.isArray(locationsResponse) ? locationsResponse : (locationsResponse?.data || []);
+  }, [locationsResponse]);
+
+  const allZones = useMemo(() => {
+    return Array.isArray(zonesResponse) ? zonesResponse : (zonesResponse?.data || []);
+  }, [zonesResponse]);
+
+  const allRoles = useMemo(() => {
+    return Array.isArray(rolesResponse) ? rolesResponse : (rolesResponse?.data || []);
+  }, [rolesResponse]);
 
   const assignableUsers = useMemo(() => {
     return allUsers.filter((u) => {
@@ -2246,39 +2279,6 @@ const AddAssignmentPage = () => {
     });
   }, [allUsers, currentUserRole]);
 
-  const buildHierarchicalList = (flatList) => {
-    if (!flatList || !Array.isArray(flatList)) return [];
-
-    const map = {};
-    const roots = [];
-
-    flatList.forEach((item) => {
-      map[item.id] = { ...item, children: [] };
-    });
-
-    flatList.forEach((item) => {
-      if (item.parent_id && map[item.parent_id]) {
-        map[item.parent_id].children.push(map[item.id]);
-      } else {
-        roots.push(map[item.id]);
-      }
-    });
-
-    const flatten = (items, level = 0) => {
-      let result = [];
-      items.forEach((item) => {
-        result.push({ ...item, level });
-        if (item.children.length > 0) {
-          result = result.concat(flatten(item.children, level + 1));
-        }
-      });
-      return result;
-    };
-
-    return flatten(roots);
-  };
-
-  // ✅ CHECK ROLE TYPES SELECTED
   const isZonalAdminSelected = useMemo(() => {
     if (assignmentMode === "multi") return selectedUsers.some((u) => parseInt(u.role_id) === 6);
     const user = assignableUsers.find((u) => u.id === singleUser);
@@ -2291,35 +2291,20 @@ const AddAssignmentPage = () => {
     return user ? parseInt(user.role_id) === 3 : false;
   }, [assignmentMode, selectedUsers, singleUser, assignableUsers]);
 
-  // ✅ VISIBILITY FLAGS
-  const showZoneDropdown = isZonalAdminSelected || isSupervisorSelected;
-  const showLocationDropdown = !isZonalAdminSelected && !(isSupervisorSelected && selectAllZoneLocations);
-
-  // ✅ ADD THIS
-  const { data: rolesResponse = [], isLoading: isLoadingRoles } = useDropdownRoles();
-  const allRoles = Array.isArray(rolesResponse) ? rolesResponse : (rolesResponse?.data || []);
-
-  const isDataLoading = isLoadingUsers || isLoadingLocations || isLoadingRoles || isLoadingZones;
   const userAssignedLocations = useMemo(() => {
     if (assignmentMode !== "single" || !singleUser) return [];
     return singleUserAssignmentsData.map((a) => a.location_id);
   }, [singleUserAssignmentsData, assignmentMode, singleUser]);
 
-const baseLocations = useMemo(() => {
+  const baseLocations = useMemo(() => {
     let locs = allLocations;
 
-    // 1. If Supervisor is selected, enforce Zone selection
     if (isSupervisorSelected) {
-      if (selectedZones.length === 0) {
-        return []; // Show NO locations until they pick a zone
-      }
-      
-      // Filter by the selected zones
+      if (selectedZones.length === 0) return [];
       const selectedZoneIds = selectedZones.map((z) => z.id.toString());
       locs = locs.filter((loc) => selectedZoneIds.includes(loc.type_id?.toString()));
     }
 
-    // 2. Filter out already assigned locations (for single assignment mode)
     if (assignmentMode === "single" && singleUser) {
       locs = locs.filter((loc) => !userAssignedLocations.includes(loc.id));
     }
@@ -2327,11 +2312,37 @@ const baseLocations = useMemo(() => {
     return locs;
   }, [allLocations, isSupervisorSelected, selectedZones, assignmentMode, singleUser, userAssignedLocations]);
 
+  const hierarchicalZones = useMemo(() => buildHierarchicalList(allZones), [allZones]);
+
+  // Filters
+  const filteredUsers = useMemo(() => {
+    return assignableUsers.filter((user) => {
+      const matchesSearch = user.name.toLowerCase().includes(userSearchTerm.toLowerCase());
+      const matchesRole = selectedRoleFilter === "all" || user.role?.name?.toLowerCase() === selectedRoleFilter.toLowerCase();
+      return matchesSearch && matchesRole;
+    });
+  }, [assignableUsers, userSearchTerm, selectedRoleFilter]);
+
+  const filteredLocations = useMemo(() => {
+    return baseLocations.filter((loc) => loc.name.toLowerCase().includes(locationSearchTerm.toLowerCase()));
+  }, [baseLocations, locationSearchTerm]);
+
+  const filteredZones = useMemo(() => {
+    return hierarchicalZones.filter((zone) => zone.name.toLowerCase().includes(zoneSearchTerm.toLowerCase()));
+  }, [hierarchicalZones, zoneSearchTerm]);
+
+
+  // --- VISIBILITY FLAGS ---
+  const showZoneDropdown = isZonalAdminSelected || isSupervisorSelected;
+  const showLocationDropdown = !isZonalAdminSelected && !(isSupervisorSelected && selectAllZoneLocations);
+  const isDataLoading = isLoadingUsers || isLoadingLocations || isLoadingRoles || isLoadingZones;
+
+  const allLocationsSelected = selectedLocations.length === baseLocations.length && baseLocations.length > 0;
+  const allUsersSelected = selectedUsers.length === filteredUsers.length && filteredUsers.length > 0;
+
   // --- UI HELPERS ---
   const getRoleColor = (roleName) => {
-    if (!roleName)
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
-
+    if (!roleName) return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
     const role = roleName.toLowerCase();
     switch (role) {
       case "supervisor": return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300";
@@ -2342,6 +2353,68 @@ const baseLocations = useMemo(() => {
       case "facility admin": return "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300";
       default: return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
     }
+  };
+
+  // --- EVENT LISTENERS ---
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (userDropdownRef.current && !userDropdownRef.current.contains(event.target)) setIsUserDropdownOpen(false);
+      if (locationDropdownRef.current && !locationDropdownRef.current.contains(event.target)) setIsLocationDropdownOpen(false);
+      if (zoneDropdownRef.current && !zoneDropdownRef.current.contains(event.target)) setIsZoneDropdownOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // --- HANDLERS ---
+  const handleModeToggle = () => {
+    setAssignmentMode((prev) => (prev === "multi" ? "single" : "multi"));
+    // Reset all states immediately on mode change instead of trapping them in a useEffect
+    setSelectedUsers([]);
+    setSingleUser("");
+    setSelectedLocations([]);
+    setUserSearchTerm("");
+    setLocationSearchTerm("");
+    setSelectedRoleFilter("all");
+    setIsUserDropdownOpen(false);
+    setIsLocationDropdownOpen(false);
+    setSelectedZones([]);
+    setZoneSearchTerm("");
+    setIsZoneDropdownOpen(false);
+    setSelectAllZoneLocations(false);
+  };
+
+  const handleUserSelect = (user) => {
+    if (assignmentMode === "multi") {
+      setSelectedUsers((prev) => prev.some((u) => u.id === user.id) ? prev.filter((u) => u.id !== user.id) : [...prev, user]);
+    } else {
+      setSingleUser(user.id);
+      setUserSearchTerm(user.name);
+      setIsUserDropdownOpen(false);
+      setSelectedLocations([]);
+    }
+  };
+
+  const handleLocationSelect = (location) => {
+    setSelectedLocations((prev) => prev.some((loc) => loc.id === location.id) ? prev.filter((loc) => loc.id !== location.id) : [...prev, location]);
+  };
+
+  const handleZoneSelect = (zone) => {
+    setSelectedZones((prev) => prev.some((z) => z.id === zone.id) ? prev.filter((z) => z.id !== zone.id) : [...prev, zone]);
+  };
+
+  const handleRemoveUser = (userId) => setSelectedUsers((prev) => prev.filter((u) => u.id !== userId));
+  const handleRemoveLocation = (locationId) => setSelectedLocations((prev) => prev.filter((loc) => loc.id !== locationId));
+  const handleRemoveZone = (zoneId) => setSelectedZones((prev) => prev.filter((z) => z.id !== zoneId));
+
+  const handleSelectAllLocations = () => {
+    if (allLocationsSelected) setSelectedLocations([]);
+    else setSelectedLocations(baseLocations);
+  };
+
+  const handleSelectAllUsers = () => {
+    if (allUsersSelected) setSelectedUsers([]);
+    else setSelectedUsers(filteredUsers);
   };
 
   const validateAssignments = async () => {
@@ -2371,90 +2444,16 @@ const baseLocations = useMemo(() => {
     return conflicts;
   };
 
-  // --- CLOSE DROPDOWNS ON OUTSIDE CLICK ---
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (userDropdownRef.current && !userDropdownRef.current.contains(event.target)) setIsUserDropdownOpen(false);
-      if (locationDropdownRef.current && !locationDropdownRef.current.contains(event.target)) setIsLocationDropdownOpen(false);
-      if (zoneDropdownRef.current && !zoneDropdownRef.current.contains(event.target)) setIsZoneDropdownOpen(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // --- RESET ON MODE CHANGE ---
-  useEffect(() => {
-    if (!assignmentMode) return;
-    setSelectedUsers([]);
-    setSingleUser("");
-    setSelectedLocations([]);
-    setUserSearchTerm("");
-    setLocationSearchTerm("");
-    setSelectedRoleFilter("all");
-    setIsUserDropdownOpen(false);
-    setIsLocationDropdownOpen(false);
-
-    // Reset zone and supervisor settings
-    setSelectedZones([]);
-    setZoneSearchTerm("");
-    setIsZoneDropdownOpen(false);
-    setSelectAllZoneLocations(false);
-  }, [assignmentMode]);
-
-  // --- HANDLERS ---
-  const handleModeToggle = () => setAssignmentMode((prev) => (prev === "multi" ? "single" : "multi"));
-
-  const handleUserSelect = (user) => {
-    if (assignmentMode === "multi") {
-      setSelectedUsers((prev) => prev.some((u) => u.id === user.id) ? prev.filter((u) => u.id !== user.id) : [...prev, user]);
-    } else {
-      setSingleUser(user.id);
-      setUserSearchTerm(user.name);
-      setIsUserDropdownOpen(false);
-      setSelectedLocations([]);
-    }
-  };
-
-  const handleLocationSelect = (location) => {
-    setSelectedLocations((prev) => prev.some((loc) => loc.id === location.id) ? prev.filter((loc) => loc.id !== location.id) : [...prev, location]);
-  };
-
-  const handleZoneSelect = (zone) => {
-    setSelectedZones((prev) => prev.some((z) => z.id === zone.id) ? prev.filter((z) => z.id !== zone.id) : [...prev, zone]);
-  };
-
-  const handleRemoveUser = (userId) => setSelectedUsers((prev) => prev.filter((u) => u.id !== userId));
-  const handleRemoveLocation = (locationId) => setSelectedLocations((prev) => prev.filter((loc) => loc.id !== locationId));
-  const handleRemoveZone = (zoneId) => setSelectedZones((prev) => prev.filter((z) => z.id !== zoneId));
-
-  const handleSelectAllLocations = () => {
-    if (selectedLocations.length === baseLocations.length) {
-      setSelectedLocations([]);
-    } else {
-      setSelectedLocations(baseLocations);
-    }
-  };
-
-  const handleSelectAllUsers = () => {
-    if (selectedUsers.length === filteredUsers.length) setSelectedUsers([]);
-    else setSelectedUsers(filteredUsers);
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!canAddAssignment) return toast.error("You don't have permission to add assignments");
 
-    // Pre-Validation
     if (assignmentMode === "multi" && selectedUsers.length === 0) return toast.error("Please select at least one user.");
     if (assignmentMode === "single" && !singleUser) return toast.error("Please select a user.");
 
-    if (showZoneDropdown && selectedZones.length === 0) {
-      return toast.error("Please select at least one zone for the chosen role.");
-    }
-    if (showLocationDropdown && selectedLocations.length === 0) {
-      return toast.error("Please select at least one location.");
-    }
+    if (showZoneDropdown && selectedZones.length === 0) return toast.error("Please select at least one zone for the chosen role.");
+    if (showLocationDropdown && selectedLocations.length === 0) return toast.error("Please select at least one location.");
 
     const conflicts = await validateAssignments();
 
@@ -2488,7 +2487,6 @@ const baseLocations = useMemo(() => {
     let failureCount = 0;
     const errors = [];
 
-   // Helper to format payload accurately
     const generatePayload = (userObj) => {
       const isZonal = parseInt(userObj.role_id) === 6;
       const isSupv = parseInt(userObj.role_id) === 3;
@@ -2496,27 +2494,19 @@ const baseLocations = useMemo(() => {
       let finalLocationIds = selectedLocations.map(loc => loc.id);
       let finalTypeIds = selectedZones.map(z => z.id);
 
-      // ✅ SMART PAYLOAD GENERATION
       if (isZonal) {
-        // Zonal Admins get assigned to Zones, NOT specific locations
         finalLocationIds = []; 
       } else if (isSupv) {
-        // Supervisors get assigned to Locations, NOT zones
-        finalTypeIds = []; // Explicitly clear out zones so the backend doesn't assign them to the zone entity
-
+        finalTypeIds = []; 
         if (selectAllZoneLocations) {
-          // Checkbox is CHECKED: Automatically find all locations physically matching the selected zones
           const selectedZoneIds = selectedZones.map(z => z.id.toString());
           const matchingLocs = allLocations.filter(loc => selectedZoneIds.includes(loc.type_id?.toString()));
           finalLocationIds = matchingLocs.map(loc => loc.id);
         }
-        // If checkbox is UNCHECKED, finalLocationIds remains as the selectedLocations from the dropdown
       } else {
-        // Cleaners (Role 5) and others
         finalTypeIds = [];
       }
 
-      // Start with the base payload
       const payload = {
         cleaner_user_id: userObj.id,
         status: "assigned",
@@ -2524,18 +2514,12 @@ const baseLocations = useMemo(() => {
         role_id: userObj.role_id,
       };
 
-      // Only send location_ids if there are actual locations to send
-      if (finalLocationIds.length > 0) {
-        payload.location_ids = finalLocationIds;
-      }
-
-      // Only send type_ids (zones) if applicable (e.g., for Zonal Admins)
-      if (finalTypeIds.length > 0) {
-        payload.type_ids = finalTypeIds;
-      }
+      if (finalLocationIds.length > 0) payload.location_ids = finalLocationIds;
+      if (finalTypeIds.length > 0) payload.type_ids = finalTypeIds;
 
       return payload;
     };
+
     try {
       if (assignmentMode === "multi") {
         const promises = selectedUsers.map(async (user) => {
@@ -2563,17 +2547,10 @@ const baseLocations = useMemo(() => {
         }
       }
 
-      // Show results
       if (successCount > 0 && failureCount === 0) {
         toast.success(`Successfully created ${successCount} assignment${successCount !== 1 ? "s" : ""}!`);
-        setSelectedUsers([]);
-        setSingleUser("");
-        setSelectedLocations([]);
-        setUserSearchTerm("");
-        setLocationSearchTerm("");
-        setSelectedZones([]);
-        setSelectAllZoneLocations(false);
-
+        
+        // Reset and push
         setTimeout(() => { router.push(`/userMapping?companyId=${companyId}`); }, 1000);
       } else if (successCount > 0 && failureCount > 0) {
         toast(
@@ -2613,24 +2590,6 @@ const baseLocations = useMemo(() => {
     }
   };
 
-  // --- FILTER MEMOS ---
-  const filteredUsers = assignableUsers.filter((user) => {
-    const matchesSearch = user.name.toLowerCase().includes(userSearchTerm.toLowerCase());
-    const matchesRole = selectedRoleFilter === "all" || user.role?.name?.toLowerCase() === selectedRoleFilter.toLowerCase();
-    return matchesSearch && matchesRole;
-  });
-
-const filteredLocations = baseLocations.filter((loc) =>
-    loc.name.toLowerCase().includes(locationSearchTerm.toLowerCase())
-  );
-
-  const locationsToShow = baseLocations;
-  const allLocationsSelected = selectedLocations.length === locationsToShow.length && locationsToShow.length > 0;
-  const allUsersSelected = selectedUsers.length === filteredUsers.length && filteredUsers.length > 0;
-
-  const hierarchicalZones = useMemo(() => buildHierarchicalList(allZones), [allZones]);
-  const filteredZones = useMemo(() => hierarchicalZones.filter((zone) => zone.name.toLowerCase().includes(zoneSearchTerm.toLowerCase())), [hierarchicalZones, zoneSearchTerm]);
-
   // --- RENDER ---
   return (
     <>
@@ -2652,9 +2611,9 @@ const filteredLocations = baseLocations.filter((loc) =>
             className="cursor-pointer p-2 rounded-full transition-all duration-200"
             style={{
               color: "var(--assignment-title)",
-              background: "var(--assignment-surface)", // Solid background for clean shadow
-              border: "1px solid var(--assignment-border)", // Added border
-              boxShadow: "var(--assignment-shadow)" // Added shadow
+              background: "var(--assignment-surface)",
+              border: "1px solid var(--assignment-border)",
+              boxShadow: "var(--assignment-shadow)"
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "var(--assignment-accent-bg)";
@@ -2693,7 +2652,6 @@ const filteredLocations = baseLocations.filter((loc) =>
 
               {/* 🔥 HORIZONTAL ROW 1: Settings & Role Filter */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                {/* Mode Toggle Box */}
                 <div
                   className="rounded-xl p-4 sm:p-5 flex items-center justify-between h-full"
                   style={{ background: "var(--assignment-surface)", border: "1px solid var(--assignment-border)" }}
@@ -2737,7 +2695,6 @@ const filteredLocations = baseLocations.filter((loc) =>
                 </div>
 
 
-                {/* Filter by Role */}
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -2752,7 +2709,6 @@ const filteredLocations = baseLocations.filter((loc) =>
                     All Roles
                   </button>
 
-                  {/* ✅ MAP OVER YOUR NEW API DATA HERE */}
                   {allRoles.map((role) => (
                     <button
                       key={role.id}
@@ -2782,7 +2738,6 @@ const filteredLocations = baseLocations.filter((loc) =>
 
               {/* 🔥 HORIZONTAL ROW 2: User & Zone Selectors */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                {/* User Selection */}
                 <div className="text-left space-y-2 relative" ref={userDropdownRef}>
                   <label className="text-xs font-black uppercase tracking-widest ml-1" style={{ color: "var(--assignment-title)" }}>
                     {assignmentMode === "multi" ? `Select Users (${selectedUsers.length} selected)` : "Select User"}
@@ -2878,7 +2833,6 @@ const filteredLocations = baseLocations.filter((loc) =>
                   )}
                 </div>
 
-                {/* Zone Selection (Visible for Zonal Admin OR Supervisor) */}
                 {showZoneDropdown && (
                   <div className="text-left space-y-2 relative" ref={zoneDropdownRef}>
                     <label className="text-xs font-black uppercase tracking-widest ml-1 flex items-center gap-2" style={{ color: "var(--assignment-title)" }}>
@@ -2953,8 +2907,6 @@ const filteredLocations = baseLocations.filter((loc) =>
 
               {/* 🔥 HORIZONTAL ROW 3: Supervisor Checkbox & Location Selection */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-
-                {/* Supervisor "Select All in Zone" Checkbox */}
                 {isSupervisorSelected && (
                   <div
                     className="w-full flex items-center p-4 rounded-xl border transition-all"
@@ -2984,7 +2936,6 @@ const filteredLocations = baseLocations.filter((loc) =>
                   </div>
                 )}
 
-                {/* Location Selection (Hidden if Zonal Admin OR if Supervisor checked 'Select All') */}
                 {showLocationDropdown && (
                   <div className="text-left space-y-2 relative" ref={locationDropdownRef}>
                     <label className="text-xs font-black uppercase tracking-widest ml-1" style={{ color: "var(--assignment-title)" }}>

@@ -1559,7 +1559,7 @@ import {
   Grid3x3,
   List,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import Loader from "@/components/ui/Loader";
 import toast, { Toaster } from "react-hot-toast";
 import LocationActionsMenu from "./components/LocationActionsMenu";
@@ -1580,6 +1580,8 @@ import { useLocationTypes } from "@/features/locationTypes/locationTypes.queries
 
 function WashroomsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
   const { companyId } = useCompanyId();
   const actionsMenuRef = useRef(null);
 
@@ -1595,25 +1597,25 @@ function WashroomsPage() {
   const canToggleStatus = hasPermission(MODULES.LOCATIONS, "toggle_status");
   const canAssignCleaner = canAdd(MODULES.ASSIGNMENTS);
 
-  // --- UI, Filter & Pagination State ---
-  const [searchQuery, setSearchQuery] = useState("");
-  const [minRating, setMinRating] = useState("");
-  const [sortBy, setSortBy] = useState("newest");
 
-  // NEW: Pagination States
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(15);
+
+  // --- UI, Filter & Pagination State ---
+  const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
+  const [limit, setLimit] = useState(Number(searchParams.get("limit")) || 15);
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
+  const [minRating, setMinRating] = useState(searchParams.get("rating") || "");
+  const [sortBy, setSortBy] = useState(searchParams.get("sortBy") || "desc");
+  const [viewMode, setViewMode] = useState(searchParams.get("view") || "table");
+
+  const [selectedLocationTypeId, setSelectedLocationTypeId] = useState(searchParams.get("typeId") || "");
+  const [facilityCompanyId, setFacilityCompanyId] = useState(searchParams.get("facilityCompanyId") || "");
+  const [facilityCompanyName, setFacilityCompanyName] = useState(searchParams.get("facilityCompanyName") || "");
+  const [assignmentFilter, setAssignmentFilter] = useState(searchParams.get("assignment") || "");
 
   const [nameSortOrder, setNameSortOrder] = useState(null);
   const [currentScoreSortOrder, setCurrentScoreSortOrder] = useState(null);
   const [avgScoreSortOrder, setAvgScoreSortOrder] = useState(null);
   const [statusSortOrder, setStatusSortOrder] = useState(null);
-  const [viewMode, setViewMode] = useState("table");
-
-  const [selectedLocationTypeId, setSelectedLocationTypeId] = useState("");
-  const [facilityCompanyId, setFacilityCompanyId] = useState("");
-  const [facilityCompanyName, setFacilityCompanyName] = useState("");
-  const [assignmentFilter, setAssignmentFilter] = useState("");
 
   // Modals & Menus
   const [actionsMenuOpen, setActionsMenuOpen] = useState(null);
@@ -1734,26 +1736,56 @@ function WashroomsPage() {
     sortBy,
   ]);
 
-  // --- URL Param Sync ---
+  const isInitialRender = useRef(true);
+
+  // --- Sync State to URL ---
   useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const sortByParam = searchParams.get("sortBy");
-    const facilityCompanyIdParam = searchParams.get("facilityCompanyId");
-    const facilityCompanyNameParam = searchParams.get("facilityCompanyName");
+    setPage(Number(searchParams.get("page")) || 1);
+    setLimit(Number(searchParams.get("limit")) || 15);
+    setSearchQuery(searchParams.get("search") || "");
+    setMinRating(searchParams.get("rating") || "");
+    setSortBy(searchParams.get("sortBy") || "desc");
+    setSelectedLocationTypeId(searchParams.get("typeId") || "");
+    setFacilityCompanyId(searchParams.get("facilityCompanyId") || "");
+    setFacilityCompanyName(searchParams.get("facilityCompanyName") || "");
+    setAssignmentFilter(searchParams.get("assignment") || "");
+    setViewMode(searchParams.get("view") || "table");
+  }, [searchParams]);
 
-    if (sortByParam === "currentScore") {
-      setSortBy("currentScoreDesc");
-      setCurrentScoreSortOrder("desc");
+  // 2. WRITE TO URL (Handles your manual filter clicks)
+  useEffect(() => {
+    // Skip the very first render so we don't accidentally overwrite the Back button's URL
+    if (isInitialRender.current) {
+      isInitialRender.current = false;
+      return;
     }
 
-    if (facilityCompanyIdParam) {
-      setFacilityCompanyId(facilityCompanyIdParam);
-      if (facilityCompanyNameParam) {
-        setFacilityCompanyName(decodeURIComponent(facilityCompanyNameParam));
-      }
-    }
-  }, []);
+    // Add a tiny 300ms delay so typing in the search bar doesn't cause lag
+    const timeoutId = setTimeout(() => {
+      const params = new URLSearchParams(searchParams.toString());
 
+      if (page > 1) params.set("page", page.toString()); else params.delete("page");
+      if (limit !== 15) params.set("limit", limit.toString()); else params.delete("limit");
+      if (searchQuery) params.set("search", searchQuery); else params.delete("search");
+      if (minRating) params.set("rating", minRating); else params.delete("rating");
+      if (sortBy && sortBy !== "desc") params.set("sortBy", sortBy); else params.delete("sortBy");
+      if (selectedLocationTypeId) params.set("typeId", selectedLocationTypeId); else params.delete("typeId");
+      if (facilityCompanyId) params.set("facilityCompanyId", facilityCompanyId); else params.delete("facilityCompanyId");
+      if (facilityCompanyName) params.set("facilityCompanyName", facilityCompanyName); else params.delete("facilityCompanyName");
+      if (assignmentFilter) params.set("assignment", assignmentFilter); else params.delete("assignment");
+      if (viewMode !== "table") params.set("view", viewMode); else params.delete("view");
+
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page, limit, searchQuery, minRating, sortBy,
+    selectedLocationTypeId, facilityCompanyId, facilityCompanyName,
+    assignmentFilter, viewMode, pathname, router
+  ]);
   // --- Click Outside Menu ---
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -1950,8 +1982,9 @@ function WashroomsPage() {
   };
 
   // --- REUSABLE CARD COMPONENT ---
-const WashroomCard = ({ item, index }) => (
+  const renderWashroomCard = ( item, index ) => (
     <div
+    key={item.id}
       onClick={() => handleView(item.id)}
       // REMOVED: overflow-hidden
       className="group rounded-2xl p-6 cursor-pointer relative transition-all duration-300 hover:-translate-y-1"
@@ -1997,16 +2030,30 @@ const WashroomCard = ({ item, index }) => (
             </p>
           </div>
         </div>
-        <div className="relative" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="relative"
+          ref={actionsMenuOpen === item.id ? actionsMenuRef : null}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          // 🔥 ADD THESE TWO LINES FOR MOBILE 🔥
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+        >
           <button
-            onClick={() =>
-              setActionsMenuOpen(actionsMenuOpen === item.id ? null : item.id)
-            }
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setActionsMenuOpen(actionsMenuOpen === item.id ? null : item.id);
+            }}
             className="p-2 rounded-full transition-colors"
             style={{ color: "var(--washroom-subtitle)" }}
           >
             <MoreVertical size={18} />
           </button>
+
           {actionsMenuOpen === item.id && (
             <LocationActionsMenu
               item={item}
@@ -2188,12 +2235,12 @@ const WashroomCard = ({ item, index }) => (
                       color: "var(--washroom-primary-text)",
                     }}
                     onMouseEnter={(e) =>
-                      (e.currentTarget.style.background =
-                        "var(--washroom-primary-hover)")
+                    (e.currentTarget.style.background =
+                      "var(--washroom-primary-hover)")
                     }
                     onMouseLeave={(e) =>
-                      (e.currentTarget.style.background =
-                        "var(--washroom-primary)")
+                    (e.currentTarget.style.background =
+                      "var(--washroom-primary)")
                     }
                   >
                     <Plus strokeWidth={3} className="w-4 h-4" />
@@ -2210,12 +2257,12 @@ const WashroomCard = ({ item, index }) => (
                       color: "var(--washroom-primary-text)",
                     }}
                     onMouseEnter={(e) =>
-                      (e.currentTarget.style.background =
-                        "var(--washroom-primary-hover)")
+                    (e.currentTarget.style.background =
+                      "var(--washroom-primary-hover)")
                     }
                     onMouseLeave={(e) =>
-                      (e.currentTarget.style.background =
-                        "var(--washroom-primary)")
+                    (e.currentTarget.style.background =
+                      "var(--washroom-primary)")
                     }
                   >
                     Assign
@@ -2372,16 +2419,16 @@ const WashroomCard = ({ item, index }) => (
                   facilityCompanyId ||
                   selectedLocationTypeId ||
                   assignmentFilter) && (
-                  <button
-                    onClick={clearAllFilters}
-                    className="ml-1 p-1 rounded-md transition-colors"
-                    style={{
-                      color: "var(--washroom-filter-clear)",
-                    }}
-                  >
-                    <XCircle size={16} />
-                  </button>
-                )}
+                    <button
+                      onClick={clearAllFilters}
+                      className="ml-1 p-1 rounded-md transition-colors"
+                      style={{
+                        color: "var(--washroom-filter-clear)",
+                      }}
+                    >
+                      <XCircle size={16} />
+                    </button>
+                  )}
               </div>
 
               {/* Count */}
@@ -2411,11 +2458,11 @@ const WashroomCard = ({ item, index }) => (
                   style={
                     viewMode === "grid"
                       ? {
-                          background:
-                            "linear-gradient(90deg, var(--washroom-primary), var(--washroom-primary-hover))",
+                        background:
+                          "linear-gradient(90deg, var(--washroom-primary), var(--washroom-primary-hover))",
 
-                          color: "var(--washroom-primary-text)",
-                        }
+                        color: "var(--washroom-primary-text)",
+                      }
                       : { color: "var(--washroom-subtitle)" }
                   }
                 >
@@ -2429,11 +2476,11 @@ const WashroomCard = ({ item, index }) => (
                   style={
                     viewMode === "table"
                       ? {
-                          background:
-                            "linear-gradient(90deg, var(--washroom-primary), var(--washroom-primary-hover))",
+                        background:
+                          "linear-gradient(90deg, var(--washroom-primary), var(--washroom-primary-hover))",
 
-                          color: "var(--washroom-primary-text)",
-                        }
+                        color: "var(--washroom-primary-text)",
+                      }
                       : { color: "var(--washroom-subtitle)" }
                   }
                 >
@@ -2480,11 +2527,7 @@ const WashroomCard = ({ item, index }) => (
                 {viewMode === "grid" ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filteredList.map((item, index) => (
-                      <WashroomCard
-                        key={item.id}
-                        item={item}
-                        index={index + (page - 1) * limit}
-                      />
+                      renderWashroomCard(item, index + (page - 1) * limit)
                     ))}
                   </div>
                 ) : (
@@ -2554,9 +2597,8 @@ const WashroomCard = ({ item, index }) => (
                         <div
                           key={item.id}
                           onClick={() => handleView(item.id)}
-                          className={`grid grid-cols-[60px_2fr_1.2fr_100px_100px_1.5fr_1fr_120px_90px] gap-2 px-6 py-4 items-center cursor-pointer transition-all duration-200 border-l-4 border-l-transparent hover:border-l-blue-600 hover:bg-blue-50/50 ${
-                            index === filteredList.length - 1 ? 'rounded-b-2xl' : ''
-                          }`}
+                          className={`grid grid-cols-[60px_2fr_1.2fr_100px_100px_1.5fr_1fr_120px_90px] gap-2 px-6 py-4 items-center cursor-pointer transition-all duration-200 border-l-4 border-l-transparent hover:border-l-blue-600 hover:bg-blue-50/50 ${index === filteredList.length - 1 ? 'rounded-b-2xl' : ''
+                            }`}
                         >
                           {/* Rank */}
                           <div className="flex justify-center">
@@ -2683,7 +2725,7 @@ const WashroomCard = ({ item, index }) => (
                                   style={{
                                     background:
                                       item.status === true ||
-                                      item.status === null
+                                        item.status === null
                                         ? "var(--washroom-status-dot-active)"
                                         : "var(--washroom-status-dot-inactive)",
                                   }}
@@ -2708,12 +2750,12 @@ const WashroomCard = ({ item, index }) => (
                               className="p-2 rounded-lg transition-colors"
                               style={{ color: "var(--washroom-icon-muted)" }}
                               onMouseEnter={(e) =>
-                                (e.currentTarget.style.background =
-                                  "var(--washroom-muted-bg)")
+                              (e.currentTarget.style.background =
+                                "var(--washroom-muted-bg)")
                               }
                               onMouseLeave={(e) =>
-                                (e.currentTarget.style.background =
-                                  "transparent")
+                              (e.currentTarget.style.background =
+                                "transparent")
                               }
                             >
                               <Navigation size={16} />
@@ -2738,12 +2780,12 @@ const WashroomCard = ({ item, index }) => (
                                 className="p-2 rounded-lg transition-colors"
                                 style={{ color: "var(--washroom-icon-muted)" }}
                                 onMouseEnter={(e) =>
-                                  (e.currentTarget.style.background =
-                                    "var(--washroom-muted-bg)")
+                                (e.currentTarget.style.background =
+                                  "var(--washroom-muted-bg)")
                                 }
                                 onMouseLeave={(e) =>
-                                  (e.currentTarget.style.background =
-                                    "transparent")
+                                (e.currentTarget.style.background =
+                                  "transparent")
                                 }
                               >
                                 <MoreVertical size={16} />
@@ -2774,11 +2816,7 @@ const WashroomCard = ({ item, index }) => (
               <div className="lg:hidden">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {filteredList.map((item, index) => (
-                    <WashroomCard
-                      key={item.id}
-                      item={item}
-                      index={index + (page - 1) * limit}
-                    />
+               renderWashroomCard(item, index + (page - 1) * limit)
                   ))}
                 </div>
               </div>
@@ -2935,19 +2973,19 @@ const WashroomCard = ({ item, index }) => (
                               style={
                                 isActive
                                   ? {
-                                      background:
-                                        "var(--washroom-status-active-bg)",
-                                      color:
-                                        "var(--washroom-status-active-text)",
-                                      border: `1px solid var(--washroom-status-active-border)`,
-                                    }
+                                    background:
+                                      "var(--washroom-status-active-bg)",
+                                    color:
+                                      "var(--washroom-status-active-text)",
+                                    border: `1px solid var(--washroom-status-active-border)`,
+                                  }
                                   : {
-                                      background:
-                                        "var(--washroom-status-inactive-bg)",
-                                      color:
-                                        "var(--washroom-status-inactive-text)",
-                                      border: `1px solid var(--washroom-status-inactive-border)`,
-                                    }
+                                    background:
+                                      "var(--washroom-status-inactive-bg)",
+                                    color:
+                                      "var(--washroom-status-inactive-text)",
+                                    border: `1px solid var(--washroom-status-inactive-border)`,
+                                  }
                               }
                             >
                               {assignment.status || "N/A"}
@@ -2982,20 +3020,20 @@ const WashroomCard = ({ item, index }) => (
                         className="p-3 rounded-full"
                         style={
                           statusModal.location?.status === true ||
-                          statusModal.location?.status === null
+                            statusModal.location?.status === null
                             ? {
-                                background:
-                                  "var(--washroom-status-inactive-bg)",
-                                border: `1px solid var(--washroom-status-inactive-border)`,
-                              }
+                              background:
+                                "var(--washroom-status-inactive-bg)",
+                              border: `1px solid var(--washroom-status-inactive-border)`,
+                            }
                             : {
-                                background: "var(--washroom-status-active-bg)",
-                                border: `1px solid var(--washroom-status-active-border)`,
-                              }
+                              background: "var(--washroom-status-active-bg)",
+                              border: `1px solid var(--washroom-status-active-border)`,
+                            }
                         }
                       >
                         {statusModal.location?.status === true ||
-                        statusModal.location?.status === null ? (
+                          statusModal.location?.status === null ? (
                           <PowerOff
                             className="h-6 w-6"
                             style={{
@@ -3018,7 +3056,7 @@ const WashroomCard = ({ item, index }) => (
                           style={{ color: "var(--washroom-title)" }}
                         >
                           {statusModal.location?.status === true ||
-                          statusModal.location?.status === null
+                            statusModal.location?.status === null
                             ? "Disable"
                             : "Enable"}{" "}
                           Washroom
@@ -3041,7 +3079,7 @@ const WashroomCard = ({ item, index }) => (
                         Are you sure you want to{" "}
                         <strong>
                           {statusModal.location?.status === true ||
-                          statusModal.location?.status === null
+                            statusModal.location?.status === null
                             ? "disable"
                             : "enable"}
                         </strong>{" "}
@@ -3051,23 +3089,23 @@ const WashroomCard = ({ item, index }) => (
                       {/* Disable warning */}
                       {(statusModal.location?.status === true ||
                         statusModal.location?.status === null) && (
-                        <div
-                          className="mt-3 p-3 rounded-md text-sm"
-                          style={{
-                            background: "var(--washroom-status-inactive-bg)",
-                            border: `1px solid var(--washroom-status-inactive-border)`,
-                            color: "var(--washroom-status-inactive-text)",
-                          }}
-                        >
-                          ⚠️ Disabling this washroom will automatically{" "}
-                          <strong>unassign all cleaners</strong>.
-                          <br />
-                          They must be <strong>
-                            manually re-assigned
-                          </strong>{" "}
-                          when enabled again.
-                        </div>
-                      )}
+                          <div
+                            className="mt-3 p-3 rounded-md text-sm"
+                            style={{
+                              background: "var(--washroom-status-inactive-bg)",
+                              border: `1px solid var(--washroom-status-inactive-border)`,
+                              color: "var(--washroom-status-inactive-text)",
+                            }}
+                          >
+                            ⚠️ Disabling this washroom will automatically{" "}
+                            <strong>unassign all cleaners</strong>.
+                            <br />
+                            They must be <strong>
+                              manually re-assigned
+                            </strong>{" "}
+                            when enabled again.
+                          </div>
+                        )}
 
                       {/* Enable info */}
                       {statusModal.location?.status === false && (
@@ -3108,7 +3146,7 @@ const WashroomCard = ({ item, index }) => (
                         style={{
                           background:
                             statusModal.location?.status === true ||
-                            statusModal.location?.status === null
+                              statusModal.location?.status === null
                               ? "var(--washroom-delete-bg)"
                               : "var(--washroom-primary)",
                         }}
@@ -3119,7 +3157,7 @@ const WashroomCard = ({ item, index }) => (
                         {togglingStatus
                           ? "Processing..."
                           : statusModal.location?.status === true ||
-                              statusModal.location?.status === null
+                            statusModal.location?.status === null
                             ? "Disable"
                             : "Enable"}
                       </button>

@@ -2114,12 +2114,12 @@ useEffect(() => {
                           <td className="p-5 text-right">
                             {/* 4. Removed hover opacity classes to keep buttons always visible */}
                             <div className="flex justify-end gap-2 transition-all">
-                              <button
+                              {/* <button
                                 onClick={() => router.push(`/users/view/${user.id}?companyId=${companyId}`)}
                                 className="p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-orange-500 hover:border-orange-200 transition-all shadow-sm"
                               >
                                 <Eye size={16} />
-                              </button>
+                              </button> */}
                               {canManageUser(user) && (
                                 <>
                                   {canEditUser && (

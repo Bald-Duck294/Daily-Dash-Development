@@ -327,6 +327,11 @@ export function getSuperadminCompanyMenu(companyId) {
       label: "Cleaner Activity",
       href: `/cleaners?companyId=${companyId}`,
     },
+      {
+      icon: UserCheck,
+      label: "Attendance",
+      href: `/attendance?companyId=${companyId}`,
+    },
     {
       icon: Cog,
       label: "Dynamic Configuration",
@@ -529,6 +534,11 @@ export function getAdminMenu(companyId) {
       href: `/cleaners?companyId=${companyId}`,
     },
     {
+      icon: UserCheck,
+      label: "Attendance",
+      href: `/attendance?companyId=${companyId}`,
+    },
+    {
       icon: Cog,
       label: "Dynamic Configuration",
       href: `/configurations?companyId=${companyId}`,
@@ -673,6 +683,11 @@ export const getFullCompanyMenuTemplate = (companyId) => [
     requiredPermission: "cleaner_reviews.view",
     href: `/cleaners?companyId=${companyId}`,
   },
+    {
+      icon: UserCheck,
+      label: "Attendance",
+      href: `/attendance?companyId=${companyId}`,
+    },
   {
     icon: Cog,
     label: "Dynamic Configuration",

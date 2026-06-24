@@ -9,7 +9,8 @@ const Sidebar = dynamic(() => import("./Sidebar"), { ssr: false });
 
 export default function LayoutWrapper({ children }) {
   const pathname = usePathname();
-  const hideLayoutFor = ["/", "/login", "/register"];
+  // Routes that get full-screen layout (no sidebar/header)
+  const hideLayoutFor = ["/", "/login", "/register", "/stepper"];
   const shouldHideLayout = hideLayoutFor.includes(pathname);
 
   if (shouldHideLayout) {
@@ -23,10 +24,9 @@ export default function LayoutWrapper({ children }) {
         <Sidebar />
 
         {/* Main area */}
-        <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <Header />
 
-          {/* THIS is where scrolling belongs */}
           <main className="flex-1 overflow-y-auto p-4 sm:p-6">
             {children}
           </main>
