@@ -1089,6 +1089,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { useMemo } from "react";
+
 const getScoreColor = (score) => {
   if (score >= 8) return "text-green-600";
   if (score >= 5) return "text-orange-500";
@@ -1390,6 +1391,7 @@ const PhotoModal = ({ photos, onClose }) => {
                   ? "border-blue-500 ring-2 ring-blue-400"
                   : "border-green-500 ring-2 ring-green-400"
                 : "border-gray-600 hover:border-gray-400"
+                
             }`}
           >
             <img
@@ -1422,6 +1424,11 @@ const EditableScoreCell = ({
   const [isEditing, setIsEditing] = useState(false);
   // Allow the initial state to fall back to an empty string safely
   const [score, setScore] = useState(review.score ?? ""); 
+
+  // Sync state if review.score updates externally
+  useEffect(() => {
+    setScore(review.score ?? "");
+  }, [review.score]);
 
   const { mutate: updateScore } = useUpdateReviewScore();
 
@@ -1478,9 +1485,12 @@ const EditableScoreCell = ({
     setIsEditing(true);
   };
 
+  // The displayed original score
+  const displayScore = review.original_score ?? review.score;
+
   if (isEditing) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-2">
         <input
           type="number"
           min="0"
@@ -1489,7 +1499,6 @@ const EditableScoreCell = ({
           value={score} 
           onChange={(e) => {
             const val = e.target.value;
-            // If the user clears the input, set state to "" instead of NaN
             setScore(val === "" ? "" : val); 
           }}
           className="w-16 px-2 py-1 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
@@ -1514,9 +1523,9 @@ const EditableScoreCell = ({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <span className={`font-semibold ${getScoreColor(review.score)}`}>
-        {typeof review.score === 'number' ? review.score.toFixed(1) : "N/A"}
+    <div className="flex items-center justify-center gap-2">
+      <span className={`font-semibold ${getScoreColor(displayScore)}`}>
+        {typeof displayScore === 'number' ? displayScore.toFixed(2) : "N/A"}
       </span>
       <button
         onClick={handleEditClick}
@@ -1573,8 +1582,6 @@ export default function ScoreManagement() {
   const [selectedPhotos, setSelectedPhotos] = useState(null);
 
   /* ================= State ================= */
-  // const [filteredReviews, setFilteredReviews] = useState([]);
-  
   const [companyFilter, setCompanyFilter] = useState("");
   const [dateFilter, setDateFilter] = useState(
     new Date().toISOString().split("T")[0],
@@ -1602,52 +1609,7 @@ export default function ScoreManagement() {
   );
 
   /* ================= Filter Logic ================= */
-  // useEffect(() => {
-  //   // 1. Normalize data structure
-  //   const normalizedReviews = Array.isArray(rawReviews) 
-  //     ? rawReviews.map((r) => ({
-  //         ...r,
-  //         photos: {
-  //           before: r.before_photo || [],
-  //           after: r.after_photo || [],
-  //         },
-  //       })) 
-  //     : [];
-
-  //   let filtered = [...normalizedReviews];
-
-  //   if (searchTerm) {
-  //     filtered = filtered.filter(
-  //       (r) =>
-  //         r.cleaner_user?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-  //         r.location?.name?.toLowerCase().includes(searchTerm.toLowerCase()),
-  //     );
-  //   }
-
-  //   if (statusFilter !== "all") {
-  //     filtered = filtered.filter((r) => r.status === statusFilter);
-  //   }
-
-  //   if (modifiedFilter === "modified") {
-  //     filtered = filtered.filter((r) => r.is_modified);
-  //   } else if (modifiedFilter === "unmodified") {
-  //     filtered = filtered.filter((r) => !r.is_modified);
-  //   }
-
-  //   if (scoreFilter === "high") {
-  //     filtered = filtered.filter((r) => typeof r.score === "number" && r.score >= 8);
-  //   } else if (scoreFilter === "medium") {
-  //     filtered = filtered.filter(
-  //       (r) => typeof r.score === "number" && r.score >= 5 && r.score <= 7,
-  //     );
-  //   } else if (scoreFilter === "low") {
-  //     filtered = filtered.filter((r) => typeof r.score === "number" && r.score < 5);
-  //   }
-
-  //   setFilteredReviews(filtered);
-  // }, [rawReviews, searchTerm, statusFilter, modifiedFilter, scoreFilter]);
-
-const filteredReviews = useMemo(() => {
+  const filteredReviews = useMemo(() => {
     // 1. Normalize data structure
     let filtered = Array.isArray(rawReviews) 
       ? rawReviews.map((r) => ({
@@ -1914,7 +1876,8 @@ const filteredReviews = useMemo(() => {
                     <th className="px-4 py-3 text-left">CLEANER</th>
                     <th className="px-4 py-3 text-left">LOCATION</th>
                     <th className="px-4 py-3 text-center">PHOTOS</th>
-                    <th className="px-4 py-3 text-center">SCORE</th>
+                    <th className="px-4 py-3 text-center">ORIGINAL SCORE</th>
+                    <th className="px-4 py-3 text-center">MODIFIED SCORE</th>
                     <th className="px-4 py-3 text-center">STATUS</th>
                     <th className="px-4 py-3 text-center">MODIFIED</th>
                     <th className="px-4 py-3 text-left">DATE/TIME</th>
@@ -1924,7 +1887,7 @@ const filteredReviews = useMemo(() => {
                 <tbody>
                   {!loadingReviews && filteredReviews.length === 0 ? (
                     <tr>
-                      <td colSpan={7}>
+                      <td colSpan={8}>
                         <EmptyState message="No reviews found for the selected filters" />
                       </td>
                     </tr>
@@ -1949,13 +1912,24 @@ const filteredReviews = useMemo(() => {
                           />
                         </td>
 
-                        {/* SCORE (EditableScoreCell) */}
+                        {/* ORIGINAL SCORE (EditableScoreCell) */}
                         <td className="px-4 py-4 text-center">
                           <EditableScoreCell
                             review={review}
                             canEdit={canEditScores}
                             isOngoing={review.status !== "completed"}
                           />
+                        </td>
+
+                        {/* MODIFIED SCORE */}
+                        <td className="px-4 py-4 text-center">
+                          {review.is_modified ? (
+                            <span className={`font-semibold ${getScoreColor(review.score)}`}>
+                              {typeof review.score === "number" ? review.score.toFixed(2) : "—"}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400 font-semibold">—</span>
+                          )}
                         </td>
 
                         {/* STATUS */}
@@ -2050,14 +2024,26 @@ const filteredReviews = useMemo(() => {
                   </span>
                 </div>
 
-                {/* Score */}
+                {/* Original Score */}
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Score</span>
+                  <span className="text-xs text-muted-foreground">Original Score</span>
                   <EditableScoreCell
                     review={review}
                     canEdit={canEditScores}
                     isOngoing={review.status !== "completed"}
                   />
+                </div>
+
+                {/* Modified Score */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Modified Score</span>
+                  {review.is_modified ? (
+                    <span className={`font-semibold text-sm ${getScoreColor(review.score)}`}>
+                      {typeof review.score === "number" ? review.score.toFixed(2) : "—"}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 text-sm font-semibold">—</span>
+                  )}
                 </div>
 
                 {/* Photos */}

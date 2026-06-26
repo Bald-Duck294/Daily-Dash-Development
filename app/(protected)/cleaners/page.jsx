@@ -302,7 +302,7 @@
 /* eslint-disable react-hooks/static-components */
 "use client";
 
-import { useState, useEffect, useMemo,useRef} from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import toast, { Toaster } from "react-hot-toast";
 
@@ -359,7 +359,7 @@ export default function CleanerReviewPage() {
   const { companyId } = useCompanyId();
 
   // Basic Filters
- const [filter, setFilter] = useState(searchParams.get("status") || "all");
+  const [filter, setFilter] = useState(searchParams.get("status") || "all");
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
   const [datePreset, setDatePreset] = useState(searchParams.get("datePreset") || "today");
   const [startDate, setStartDate] = useState(searchParams.get("startDate") || getLocalDateString());
@@ -445,9 +445,10 @@ export default function CleanerReviewPage() {
     toast.error(error?.message || "Failed to load cleaner activity");
   }
 
-useEffect(() => {
-    const params = new URLSearchParams(searchParams.toString());
-    
+  useEffect(() => {
+    // 1. Build a fresh URLSearchParams from current state (not from searchParams hook)
+    const params = new URLSearchParams();
+
     params.set("status", filter);
     params.set("cleanerId", selectedCleanerId);
     params.set("datePreset", datePreset);
@@ -455,16 +456,21 @@ useEffect(() => {
     params.set("endDate", endDate);
     params.set("page", page.toString());
     params.set("limit", limit.toString());
-    
+
     if (searchQuery) {
       params.set("search", searchQuery);
-    } else {
-      params.delete("search");
     }
 
-    // Replace current URL to preserve history for the "Back" button
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [filter, selectedCleanerId, datePreset, startDate, endDate, page, limit, searchQuery, router, searchParams]);
+    const newQueryString = `?${params.toString()}`;
+
+    // 2. Only trigger a route replacement if the URL is ACTUALLY different
+    // This acts as a circuit breaker for infinite loops
+    if (window.location.search !== newQueryString) {
+      router.replace(newQueryString, { scroll: false });
+    }
+
+    // 3. DO NOT include searchParams in this array
+  }, [filter, selectedCleanerId, datePreset, startDate, endDate, page, limit, searchQuery, router]);
 
   /* ---------------- Date Preset Logic ---------------- */
   useEffect(() => {
@@ -472,28 +478,40 @@ useEffect(() => {
     const todayObj = new Date();
 
     if (datePreset === "today") {
-      setStartDate(todayStr);
-      setEndDate(todayStr);
+      // Only update if the dates aren't already set to today
+      setStartDate((prev) => prev !== todayStr ? todayStr : prev);
+      setEndDate((prev) => prev !== todayStr ? todayStr : prev);
+
     } else if (datePreset === "this_month") {
       const firstDay = new Date(todayObj.getFullYear(), todayObj.getMonth(), 1);
       const lastDay = new Date(todayObj.getFullYear(), todayObj.getMonth() + 1, 0);
       const formatLocal = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split("T")[0];
-      setStartDate(formatLocal(firstDay));
-      setEndDate(formatLocal(lastDay));
+
+      const newStart = formatLocal(firstDay);
+      const newEnd = formatLocal(lastDay);
+
+      setStartDate((prev) => prev !== newStart ? newStart : prev);
+      setEndDate((prev) => prev !== newEnd ? newEnd : prev);
+
     } else if (datePreset === "all") {
-      setStartDate("");
-      setEndDate("");
+      setStartDate((prev) => prev !== "" ? "" : prev);
+      setEndDate((prev) => prev !== "" ? "" : prev);
     }
   }, [datePreset]);
 
   // Reset page to 1 if any filter changes
   useEffect(() => {
-    setPage(1);
+    setPage((prevPage) => {
+      // Only update if we aren't already on page 1
+      // Returning the exact same value (prevPage) prevents a re-render!
+      return prevPage !== 1 ? 1 : prevPage;
+    });
   }, [filter, datePreset, startDate, endDate, selectedCleanerId]);
+  // Notice: 'page' is completely removed from the array
 
   /* ---------------- render ---------------- */
   return (
- <>
+    <>
       <Toaster position="top-center" />
 
       <div
@@ -579,7 +597,7 @@ useEffect(() => {
             </div>
           </div>
 
-        {/* ================= FILTER CARD ================= */}
+          {/* ================= FILTER CARD ================= */}
           <div
             className="rounded-xl p-4 flex flex-wrap items-center justify-between gap-4" // Changed to flex, items-center, justify-between
             style={{
@@ -609,7 +627,7 @@ useEffect(() => {
 
             {/* CONTROLS - Right Side */}
             <div className="flex flex-wrap items-end gap-3">
-              
+
               {/* Cleaner Dropdown */}
               <div className="flex flex-col gap-1" ref={dropdownRef}>
                 <label className="text-[11px] font-medium" style={{ color: "var(--cleaner-subtitle)" }}>
@@ -762,7 +780,7 @@ useEffect(() => {
           </div>
 
           {/* ================= MAIN GRID ================= */}
-           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {/* UPDATED: md:grid-cols-2 xl:grid-cols-3 handles the 3-columns layout! */}
             <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {isLoading ? (
@@ -831,20 +849,36 @@ useEffect(() => {
                             </div>
                           </div>
 
-                          {/* STATUS */}
-                          <span
-                            className="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
-                            style={{
-                              background: active
-                                ? "var(--cleaner-status-active-bg)"
-                                : "var(--cleaner-status-inactive-bg)",
-                              color: active
-                                ? "var(--cleaner-status-active-text)"
-                                : "var(--cleaner-status-inactive-text)",
-                            }}
-                          >
-                            {r.status}
-                          </span>
+                          {/* STATUS & SCORE */}
+                          <div className="flex flex-col items-end gap-1.5">
+                            <span
+                              className="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                              style={{
+                                background: active
+                                  ? "var(--cleaner-status-active-bg)"
+                                  : "var(--cleaner-status-inactive-bg)",
+                                color: active
+                                  ? "var(--cleaner-status-active-text)"
+                                  : "var(--cleaner-status-inactive-text)",
+                              }}
+                            >
+                              {r.status}
+                            </span>
+
+                            {/* Display Score if available */}
+                            {typeof r.score === "number" && (
+                              <span
+                                className="px-2 py-0.5 rounded text-[10px] font-bold tracking-wide"
+                                style={{
+                                  background: "var(--cleaner-input-bg)",
+                                  color: "var(--cleaner-title)",
+                                  border: "1px solid var(--cleaner-border)",
+                                }}
+                              >
+                                ⭐ {r.score.toFixed(2)} / <b>10</b>
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* EVIDENCE */}
@@ -1020,7 +1054,7 @@ useEffect(() => {
               )}
             </div>
 
-           </div>
+          </div>
         </div>
       </div>
     </>
